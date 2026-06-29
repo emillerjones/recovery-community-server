@@ -1,0 +1,13 @@
+session_id,game_id,host_user_id,session_title,session_description,session_status,is_private,max_users,started_at,ended_at,last_activity_at,created_by_user_id,creation_source
+1,1,1,Elden Ring Co-op Night,Open world co-op and bosses,active,false,4,2026-04-22 18:00:00,,2026-04-22 20:15:00,1,user
+2,2,2,Cyberpunk Story Chill,Laid back questing and build talk,active,false,4,2026-04-22 19:00:00,,2026-04-22 19:50:00,2,user
+3,3,3,GTA V Heist Group,Need a solid squad for heists,active,false,4,2026-04-22 21:00:00,,2026-04-22 21:40:00,3,user
+4,4,4,RDR2 Private Ride,Private session for friends only,active,true,4,2026-04-22 20:30:00,,2026-04-22 21:05:00,4,user
+5,5,5,Witcher 3 Lore Talk,Just hanging out and talking builds,active,false,4,2026-04-22 17:30:00,,2026-04-22 18:10:00,5,user
+6,6,6,Skyrim Modded Run,Messing around in a modded save,active,false,4,2026-04-22 16:00:00,,2026-04-22 17:45:00,6,user
+7,9,7,BG3 Full Party,Campaign party already rolling,active,false,4,2026-04-22 18:45:00,,2026-04-22 20:00:00,7,user
+8,10,8,Divinity Tactician Run,Hard mode planning and co-op,active,false,4,2026-04-22 19:15:00,,2026-04-22 20:20:00,8,user
+9,11,9,Hades Escape Attempts,Quick runs and chatting,ended,false,4,2026-04-21 19:00:00,2026-04-21 21:00:00,2026-04-21 21:00:00,9,user
+10,13,10,Hollow Knight Route Help,Exploration and route advice,ended,false,4,2026-04-20 18:00:00,2026-04-20 19:10:00,2026-04-20 19:10:00,10,user
+11,18,11,Vampire Survivors Farm,Grinding unlocks and gold,active,false,4,2026-04-22 22:00:00,,2026-04-22 22:20:00,11,user
+12,19,12,Monster Hunter World Hunts,Need hunters for a few quests,active,false,4,2026-04-22 20:00:00,,2026-04-22 20:55:00,12,user

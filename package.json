@@ -1,0 +1,37 @@
+{
+  "name": "lootlink",
+  "type": "module",
+  "imports": {
+    "#*": "./*.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch --env-file=.env server.js",
+    "test": "vitest",
+    "db:schema": "node --env-file=.env -e \"import('child_process').then(({execSync})=>execSync('psql -f db/schema.sql \\\"' + process.env.DATABASE_URL + '\\\"', {stdio:'inherit'}))\"",
+    "db:seed": "node --env-file=.env db/seed.js",
+    "db:reset": "npm run db:schema && npm run db:seed"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "csv-parse": "^6.2.1",
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^1.16.0",
+    "morgan": "^1.10.1",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.20.0",
+    "psn-api": "^2.17.0"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.0",
+    "vitest": "^3.1.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

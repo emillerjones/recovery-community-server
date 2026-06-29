@@ -1,0 +1,390 @@
+slug,platform_name,external_game_id
+elden-ring,Steam,steam-0001
+elden-ring,PlayStation,playstation-0002
+elden-ring,Xbox,xbox-0003
+cyberpunk-2077,Steam,steam-0004
+cyberpunk-2077,PlayStation,playstation-0005
+cyberpunk-2077,Xbox,xbox-0006
+grand-theft-auto-v,Steam,steam-0007
+grand-theft-auto-v,PlayStation,playstation-0008
+grand-theft-auto-v,Xbox,xbox-0009
+red-dead-redemption-2,Steam,steam-0010
+red-dead-redemption-2,PlayStation,playstation-0011
+red-dead-redemption-2,Xbox,xbox-0012
+the-witcher-3-wild-hunt,Steam,steam-0013
+the-witcher-3-wild-hunt,PlayStation,playstation-0014
+the-witcher-3-wild-hunt,Xbox,xbox-0015
+the-witcher-3-wild-hunt,Nintendo Switch,nintendo-switch-0016
+skyrim,Steam,steam-0017
+skyrim,PlayStation,playstation-0018
+skyrim,Xbox,xbox-0019
+skyrim,Nintendo Switch,nintendo-switch-0020
+starfield,Steam,steam-0021
+starfield,Xbox,xbox-0022
+starfield,PC,pc-0023
+fallout-4,Steam,steam-0024
+fallout-4,PlayStation,playstation-0025
+fallout-4,Xbox,xbox-0026
+baldur-s-gate-3,Steam,steam-0027
+baldur-s-gate-3,PlayStation,playstation-0028
+baldur-s-gate-3,Xbox,xbox-0029
+divinity-original-sin-2,Steam,steam-0030
+divinity-original-sin-2,PlayStation,playstation-0031
+divinity-original-sin-2,Xbox,xbox-0032
+divinity-original-sin-2,Nintendo Switch,nintendo-switch-0033
+hades,Steam,steam-0034
+hades,PlayStation,playstation-0035
+hades,Xbox,xbox-0036
+hades,Nintendo Switch,nintendo-switch-0037
+hades-ii,Steam,steam-0038
+hades-ii,PC,pc-0039
+hollow-knight,Steam,steam-0040
+hollow-knight,PlayStation,playstation-0041
+hollow-knight,Xbox,xbox-0042
+hollow-knight,Nintendo Switch,nintendo-switch-0043
+cuphead,Steam,steam-0044
+cuphead,PlayStation,playstation-0045
+cuphead,Xbox,xbox-0046
+cuphead,Nintendo Switch,nintendo-switch-0047
+celeste,Steam,steam-0048
+celeste,PlayStation,playstation-0049
+celeste,Xbox,xbox-0050
+celeste,Nintendo Switch,nintendo-switch-0051
+dead-cells,Steam,steam-0052
+dead-cells,PlayStation,playstation-0053
+dead-cells,Xbox,xbox-0054
+dead-cells,Nintendo Switch,nintendo-switch-0055
+slay-the-spire,Steam,steam-0056
+slay-the-spire,PlayStation,playstation-0057
+slay-the-spire,Xbox,xbox-0058
+slay-the-spire,Nintendo Switch,nintendo-switch-0059
+vampire-survivors,Steam,steam-0060
+vampire-survivors,Xbox,xbox-0061
+vampire-survivors,Nintendo Switch,nintendo-switch-0062
+vampire-survivors,PC,pc-0063
+monster-hunter-world,Steam,steam-0064
+monster-hunter-world,PlayStation,playstation-0065
+monster-hunter-world,Xbox,xbox-0066
+monster-hunter-rise,Steam,steam-0067
+monster-hunter-rise,PlayStation,playstation-0068
+monster-hunter-rise,Xbox,xbox-0069
+monster-hunter-rise,Nintendo Switch,nintendo-switch-0070
+resident-evil-4,Steam,steam-0071
+resident-evil-4,PlayStation,playstation-0072
+resident-evil-4,Xbox,xbox-0073
+resident-evil-village,Steam,steam-0074
+resident-evil-village,PlayStation,playstation-0075
+resident-evil-village,Xbox,xbox-0076
+street-fighter-6,Steam,steam-0077
+street-fighter-6,PlayStation,playstation-0078
+street-fighter-6,Xbox,xbox-0079
+tekken-8,Steam,steam-0080
+tekken-8,PlayStation,playstation-0081
+tekken-8,Xbox,xbox-0082
+mortal-kombat-1,Steam,steam-0083
+mortal-kombat-1,PlayStation,playstation-0084
+mortal-kombat-1,Xbox,xbox-0085
+mortal-kombat-1,Nintendo Switch,nintendo-switch-0086
+forza-horizon-5,Steam,steam-0087
+forza-horizon-5,Xbox,xbox-0088
+forza-horizon-5,PC,pc-0089
+forza-horizon-5,PlayStation,playstation-0090
+gran-turismo-7,PlayStation,playstation-0091
+mario-kart-8-deluxe,Nintendo Switch,nintendo-switch-0092
+need-for-speed-unbound,Steam,steam-0093
+need-for-speed-unbound,PlayStation,playstation-0094
+need-for-speed-unbound,Xbox,xbox-0095
+ea-sports-fc-25,Steam,steam-0096
+ea-sports-fc-25,PlayStation,playstation-0097
+ea-sports-fc-25,Xbox,xbox-0098
+ea-sports-fc-25,Nintendo Switch,nintendo-switch-0099
+nba-2k25,Steam,steam-0100
+nba-2k25,PlayStation,playstation-0101
+nba-2k25,Xbox,xbox-0102
+nba-2k25,Nintendo Switch,nintendo-switch-0103
+mlb-the-show-24,PlayStation,playstation-0104
+mlb-the-show-24,Xbox,xbox-0105
+mlb-the-show-24,Nintendo Switch,nintendo-switch-0106
+rocket-league,Steam,steam-0107
+rocket-league,PlayStation,playstation-0108
+rocket-league,Xbox,xbox-0109
+rocket-league,Nintendo Switch,nintendo-switch-0110
+rocket-league,PC,pc-0111
+fortnite,PlayStation,playstation-0112
+fortnite,Xbox,xbox-0113
+fortnite,Nintendo Switch,nintendo-switch-0114
+fortnite,PC,pc-0115
+apex-legends,Steam,steam-0116
+apex-legends,PlayStation,playstation-0117
+apex-legends,Xbox,xbox-0118
+apex-legends,Nintendo Switch,nintendo-switch-0119
+call-of-duty-warzone,Steam,steam-0120
+call-of-duty-warzone,PlayStation,playstation-0121
+call-of-duty-warzone,Xbox,xbox-0122
+call-of-duty-warzone,Battle.net,battle-net-0123
+overwatch-2,PlayStation,playstation-0124
+overwatch-2,Xbox,xbox-0125
+overwatch-2,PC,pc-0126
+overwatch-2,Battle.net,battle-net-0127
+valorant,PC,pc-0128
+valorant,PlayStation,playstation-0129
+valorant,Xbox,xbox-0130
+counter-strike-2,Steam,steam-0131
+counter-strike-2,PC,pc-0132
+rainbow-six-siege,Steam,steam-0133
+rainbow-six-siege,PlayStation,playstation-0134
+rainbow-six-siege,Xbox,xbox-0135
+rainbow-six-siege,PC,pc-0136
+destiny-2,Steam,steam-0137
+destiny-2,PlayStation,playstation-0138
+destiny-2,Xbox,xbox-0139
+warframe,Steam,steam-0140
+warframe,PlayStation,playstation-0141
+warframe,Xbox,xbox-0142
+warframe,Nintendo Switch,nintendo-switch-0143
+warframe,PC,pc-0144
+helldivers-2,Steam,steam-0145
+helldivers-2,PlayStation,playstation-0146
+helldivers-2,PC,pc-0147
+deep-rock-galactic,Steam,steam-0148
+deep-rock-galactic,PlayStation,playstation-0149
+deep-rock-galactic,Xbox,xbox-0150
+deep-rock-galactic,PC,pc-0151
+left-4-dead-2,Steam,steam-0152
+left-4-dead-2,PC,pc-0153
+diablo-iv,PlayStation,playstation-0154
+diablo-iv,Xbox,xbox-0155
+diablo-iv,PC,pc-0156
+diablo-iv,Battle.net,battle-net-0157
+diablo-iv,Steam,steam-0158
+path-of-exile,Steam,steam-0159
+path-of-exile,PlayStation,playstation-0160
+path-of-exile,Xbox,xbox-0161
+path-of-exile,PC,pc-0162
+path-of-exile-2,Steam,steam-0163
+path-of-exile-2,PlayStation,playstation-0164
+path-of-exile-2,Xbox,xbox-0165
+path-of-exile-2,PC,pc-0166
+final-fantasy-xiv-online,PlayStation,playstation-0167
+final-fantasy-xiv-online,PC,pc-0168
+final-fantasy-xiv-online,Steam,steam-0169
+final-fantasy-xiv-online,Xbox,xbox-0170
+world-of-warcraft,PC,pc-0171
+world-of-warcraft,Battle.net,battle-net-0172
+guild-wars-2,PC,pc-0173
+the-elder-scrolls-online,Steam,steam-0174
+the-elder-scrolls-online,PlayStation,playstation-0175
+the-elder-scrolls-online,Xbox,xbox-0176
+the-elder-scrolls-online,PC,pc-0177
+sea-of-thieves,Steam,steam-0178
+sea-of-thieves,PlayStation,playstation-0179
+sea-of-thieves,Xbox,xbox-0180
+sea-of-thieves,PC,pc-0181
+no-man-s-sky,Steam,steam-0182
+no-man-s-sky,PlayStation,playstation-0183
+no-man-s-sky,Xbox,xbox-0184
+no-man-s-sky,Nintendo Switch,nintendo-switch-0185
+no-man-s-sky,PC,pc-0186
+subnautica,Steam,steam-0187
+subnautica,PlayStation,playstation-0188
+subnautica,Xbox,xbox-0189
+subnautica,Nintendo Switch,nintendo-switch-0190
+subnautica,PC,pc-0191
+ark-survival-evolved,Steam,steam-0192
+ark-survival-evolved,PlayStation,playstation-0193
+ark-survival-evolved,Xbox,xbox-0194
+ark-survival-evolved,Nintendo Switch,nintendo-switch-0195
+ark-survival-evolved,PC,pc-0196
+valheim,Steam,steam-0197
+valheim,Xbox,xbox-0198
+valheim,PC,pc-0199
+rust,Steam,steam-0200
+rust,PlayStation,playstation-0201
+rust,Xbox,xbox-0202
+rust,PC,pc-0203
+minecraft,PC,pc-0204
+minecraft,PlayStation,playstation-0205
+minecraft,Xbox,xbox-0206
+minecraft,Nintendo Switch,nintendo-switch-0207
+terraria,Steam,steam-0208
+terraria,PlayStation,playstation-0209
+terraria,Xbox,xbox-0210
+terraria,Nintendo Switch,nintendo-switch-0211
+terraria,PC,pc-0212
+stardew-valley,Steam,steam-0213
+stardew-valley,PlayStation,playstation-0214
+stardew-valley,Xbox,xbox-0215
+stardew-valley,Nintendo Switch,nintendo-switch-0216
+stardew-valley,PC,pc-0217
+animal-crossing-new-horizons,Nintendo Switch,nintendo-switch-0218
+the-sims-4,Steam,steam-0219
+the-sims-4,PlayStation,playstation-0220
+the-sims-4,Xbox,xbox-0221
+the-sims-4,PC,pc-0222
+cities-skylines,Steam,steam-0223
+cities-skylines,PlayStation,playstation-0224
+cities-skylines,Xbox,xbox-0225
+cities-skylines,Nintendo Switch,nintendo-switch-0226
+cities-skylines,PC,pc-0227
+cities-skylines-ii,Steam,steam-0228
+cities-skylines-ii,PC,pc-0229
+cities-skylines-ii,Xbox,xbox-0230
+cities-skylines-ii,PlayStation,playstation-0231
+civilization-vi,Steam,steam-0232
+civilization-vi,PlayStation,playstation-0233
+civilization-vi,Xbox,xbox-0234
+civilization-vi,Nintendo Switch,nintendo-switch-0235
+civilization-vi,PC,pc-0236
+age-of-empires-iv,Steam,steam-0237
+age-of-empires-iv,Xbox,xbox-0238
+age-of-empires-iv,PC,pc-0239
+starcraft-ii,PC,pc-0240
+starcraft-ii,Battle.net,battle-net-0241
+xcom-2,Steam,steam-0242
+xcom-2,PlayStation,playstation-0243
+xcom-2,Xbox,xbox-0244
+xcom-2,Nintendo Switch,nintendo-switch-0245
+xcom-2,PC,pc-0246
+into-the-breach,Steam,steam-0247
+into-the-breach,Nintendo Switch,nintendo-switch-0248
+into-the-breach,PC,pc-0249
+total-war-warhammer-iii,Steam,steam-0250
+total-war-warhammer-iii,PC,pc-0251
+crusader-kings-iii,Steam,steam-0252
+crusader-kings-iii,PlayStation,playstation-0253
+crusader-kings-iii,Xbox,xbox-0254
+crusader-kings-iii,PC,pc-0255
+europa-universalis-iv,Steam,steam-0256
+europa-universalis-iv,PC,pc-0257
+manor-lords,Steam,steam-0258
+manor-lords,PC,pc-0259
+doom-eternal,Steam,steam-0260
+doom-eternal,PlayStation,playstation-0261
+doom-eternal,Xbox,xbox-0262
+doom-eternal,Nintendo Switch,nintendo-switch-0263
+doom-eternal,PC,pc-0264
+doom,Steam,steam-0265
+doom,PlayStation,playstation-0266
+doom,Xbox,xbox-0267
+doom,Nintendo Switch,nintendo-switch-0268
+doom,PC,pc-0269
+titanfall-2,Steam,steam-0270
+titanfall-2,PlayStation,playstation-0271
+titanfall-2,Xbox,xbox-0272
+titanfall-2,PC,pc-0273
+battlefield-1,Steam,steam-0274
+battlefield-1,PlayStation,playstation-0275
+battlefield-1,Xbox,xbox-0276
+battlefield-1,PC,pc-0277
+battlefield-2042,Steam,steam-0278
+battlefield-2042,PlayStation,playstation-0279
+battlefield-2042,Xbox,xbox-0280
+battlefield-2042,PC,pc-0281
+halo-infinite,Steam,steam-0282
+halo-infinite,Xbox,xbox-0283
+halo-infinite,PC,pc-0284
+halo-the-master-chief-collection,Steam,steam-0285
+halo-the-master-chief-collection,Xbox,xbox-0286
+halo-the-master-chief-collection,PC,pc-0287
+gears-5,Steam,steam-0288
+gears-5,Xbox,xbox-0289
+gears-5,PC,pc-0290
+remnant-ii,Steam,steam-0291
+remnant-ii,PlayStation,playstation-0292
+remnant-ii,Xbox,xbox-0293
+remnant-ii,PC,pc-0294
+nioh-2,Steam,steam-0295
+nioh-2,PlayStation,playstation-0296
+nioh-2,PC,pc-0297
+wo-long-fallen-dynasty,Steam,steam-0298
+wo-long-fallen-dynasty,PlayStation,playstation-0299
+wo-long-fallen-dynasty,Xbox,xbox-0300
+wo-long-fallen-dynasty,PC,pc-0301
+lies-of-p,Steam,steam-0302
+lies-of-p,PlayStation,playstation-0303
+lies-of-p,Xbox,xbox-0304
+lies-of-p,PC,pc-0305
+black-myth-wukong,Steam,steam-0306
+black-myth-wukong,PlayStation,playstation-0307
+black-myth-wukong,PC,pc-0308
+armored-core-vi-fires-of-rubicon,Steam,steam-0309
+armored-core-vi-fires-of-rubicon,PlayStation,playstation-0310
+armored-core-vi-fires-of-rubicon,Xbox,xbox-0311
+ghost-of-tsushima-director-s-cut,Steam,steam-0312
+ghost-of-tsushima-director-s-cut,PlayStation,playstation-0313
+ghost-of-tsushima-director-s-cut,PC,pc-0314
+god-of-war-ragnarok,PlayStation,playstation-0315
+god-of-war-ragnarok,PC,pc-0316
+the-last-of-us-part-i,PlayStation,playstation-0317
+the-last-of-us-part-i,PC,pc-0318
+the-last-of-us-part-ii-remastered,PlayStation,playstation-0319
+marvel-s-spider-man-remastered,PlayStation,playstation-0320
+marvel-s-spider-man-remastered,PC,pc-0321
+marvel-s-spider-man-2,PlayStation,playstation-0322
+horizon-zero-dawn-remastered,PlayStation,playstation-0323
+horizon-zero-dawn-remastered,PC,pc-0324
+horizon-forbidden-west,PlayStation,playstation-0325
+horizon-forbidden-west,PC,pc-0326
+death-stranding-director-s-cut,Steam,steam-0327
+death-stranding-director-s-cut,PlayStation,playstation-0328
+death-stranding-director-s-cut,PC,pc-0329
+returnal,PlayStation,playstation-0330
+returnal,PC,pc-0331
+returnal,Steam,steam-0332
+ratchet-and-clank-rift-apart,PlayStation,playstation-0333
+ratchet-and-clank-rift-apart,PC,pc-0334
+astro-bot,PlayStation,playstation-0335
+super-mario-odyssey,Nintendo Switch,nintendo-switch-0336
+the-legend-of-zelda-breath-of-the-wild,Nintendo Switch,nintendo-switch-0337
+the-legend-of-zelda-tears-of-the-kingdom,Nintendo Switch,nintendo-switch-0338
+metroid-dread,Nintendo Switch,nintendo-switch-0339
+super-smash-bros-ultimate,Nintendo Switch,nintendo-switch-0340
+splatoon-3,Nintendo Switch,nintendo-switch-0341
+pokemon-scarlet,Nintendo Switch,nintendo-switch-0342
+pokemon-violet,Nintendo Switch,nintendo-switch-0343
+persona-5-royal,Steam,steam-0344
+persona-5-royal,PlayStation,playstation-0345
+persona-5-royal,Xbox,xbox-0346
+persona-5-royal,Nintendo Switch,nintendo-switch-0347
+persona-5-royal,PC,pc-0348
+persona-3-reload,Steam,steam-0349
+persona-3-reload,PlayStation,playstation-0350
+persona-3-reload,Xbox,xbox-0351
+persona-3-reload,PC,pc-0352
+metaphor-refantazio,Steam,steam-0353
+metaphor-refantazio,PlayStation,playstation-0354
+metaphor-refantazio,Xbox,xbox-0355
+metaphor-refantazio,PC,pc-0356
+final-fantasy-vii-rebirth,PlayStation,playstation-0357
+dragon-quest-xi-s-echoes-of-an-elusive-age,Steam,steam-0358
+dragon-quest-xi-s-echoes-of-an-elusive-age,PlayStation,playstation-0359
+dragon-quest-xi-s-echoes-of-an-elusive-age,Xbox,xbox-0360
+dragon-quest-xi-s-echoes-of-an-elusive-age,Nintendo Switch,nintendo-switch-0361
+dragon-quest-xi-s-echoes-of-an-elusive-age,PC,pc-0362
+octopath-traveler-ii,Steam,steam-0363
+octopath-traveler-ii,PlayStation,playstation-0364
+octopath-traveler-ii,Nintendo Switch,nintendo-switch-0365
+octopath-traveler-ii,PC,pc-0366
+like-a-dragon-infinite-wealth,Steam,steam-0367
+like-a-dragon-infinite-wealth,PlayStation,playstation-0368
+like-a-dragon-infinite-wealth,Xbox,xbox-0369
+like-a-dragon-infinite-wealth,PC,pc-0370
+palworld,Steam,steam-0371
+palworld,Xbox,xbox-0372
+palworld,PC,pc-0373
+phasmophobia,Steam,steam-0374
+phasmophobia,PlayStation,playstation-0375
+phasmophobia,Xbox,xbox-0376
+phasmophobia,PC,pc-0377
+among-us,Steam,steam-0378
+among-us,PlayStation,playstation-0379
+among-us,Xbox,xbox-0380
+among-us,Nintendo Switch,nintendo-switch-0381
+among-us,PC,pc-0382
+party-animals,Xbox,xbox-0383
+party-animals,PC,pc-0384
+party-animals,Steam,steam-0385
+fall-guys,PlayStation,playstation-0386
+fall-guys,Xbox,xbox-0387
+fall-guys,Nintendo Switch,nintendo-switch-0388
+fall-guys,PC,pc-0389
