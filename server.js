@@ -9,6 +9,3 @@ app.listen(PORT, () => {
   console.log(`Listening on port ${PORT}...`);
 });
 
-app.get("/api/notifications", (req, res) => {
-  res.send([]); 
-});

@@ -3,7 +3,9 @@ import bcrypt from "bcrypt";
 
 export async function getUsers() {
   const sql = `
-    SELECT * FROM users
+    SELECT * 
+    FROM users
+    WHERE users.deleted_at IS NULL
   `;
   const { rows: users } = await db.query(sql);
   return users;
@@ -22,52 +24,11 @@ export async function createUser(email, username, password, role_id = 100) {
   } = await db.query(sql, [email, username, hashedPassword, role_id]);
   return user;
 }
-export async function updateUser(id, data){
-  const sql = `
-  UPDATE users
-  SET 
-    date_of_birth = $1,
-    gender = $2,
-    bio = $3,
-    updated_at = NOW()
-  WHERE user_id = $4
-  RETURNING *;
-  `;
-  const {rows} = await db.query(sql, [data.date_of_birth || null, data.gender || null, data.bio || null, id]);
-  return rows[0];
-}
-
-export async function updateLastSeen(userId) {
-  const sql = `
-    UPDATE users
-    SET last_seen_at = NOW()
-    WHERE user_id = $1
-    RETURNING *;
-  `;
-
-  const { rows: [user] } = await db.query(sql, [userId]);
-  return user;
-}
-
-export async function getUserByEmailAndPassword(email, password) {
-  const sql = `
-    SELECT * FROM users
-    WHERE email = $1
-  `;
-  const {
-    rows: [user],
-  } = await db.query(sql, [email]);
-  if (!user) return null;
-
-  const isValid = await bcrypt.compare(password, user.password);
-  if (!isValid) return null;
-
-  return user;
-}
 
 export async function getUserById(id) {
   const sql = `
-    SELECT * FROM users
+    SELECT * 
+    FROM users
     WHERE user_id = $1
   `;
   const {
@@ -76,73 +37,88 @@ export async function getUserById(id) {
   return user;
 }
 
-export async function getUserByUserName(username) {
+export async function getUserByUsername(username) {
   const sql = `
-  SELECT *
-  FROM users
-  WHERE username = $1
+    SELECT *
+    FROM users
+    WHERE username = $1
   `;
   const { rows: [user]} = await db.query(sql, [username]);
   return user;
 }
 
-
-export async function updateUserSteamId(userId, steamId) {
+export async function getUserByEmailAndPassword(email, password) {
   const sql = `
-    UPDATE users
-    SET steam_id = $2
-    WHERE user_id = $1
-    RETURNING *;
+    SELECT *
+    FROM users
+    WHERE email = $1 AND users.deleted_at IS NULL
   `;
+
   const {
     rows: [user],
-  } = await db.query(sql, [userId, steamId]);
+  } = await db.query(sql, [email]);
+
+  if (!user) return null;
+
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return null;
+
   return user;
 }
 
-// Added PSN Update Function
-export async function updateUserPsnId(userId, psnId) {
+/**
+ * These three functions are meant to be added to your existing
+ * db/queries/users.js file, alongside getUsers, createUser, etc.
+ *
+ * Each one is intentionally small and does one thing — update a
+ * single column for a single user, then return the updated row so
+ * the frontend can immediately show the new state without a second
+ * fetch.
+ */
+
+/** Updates a user's role_id. Used when an admin promotes/demotes someone. */
+export async function updateUserRole(userId, newRoleId) {
   const sql = `
     UPDATE users
-    SET psn_id = $2
-    WHERE user_id = $1
-    RETURNING *; -- Crucial: returns all columns, including steam_id
-  `;
-  const {
-    rows: [user],
-  } = await db.query(sql, [userId, psnId]);
-  return user;
-}
-
-
-export async function updateUserXboxId(userId, xboxXuid, xboxGamertag){
-  const sql = `
-    UPDATE users
-    SET xbox_xuid = $2,
-    xbox_gamertag = $3
-    WHERE user_id = $1
-    RETURNING *;
-  `;
-  const { rows: [user] } = await db.query(sql, [userId, xboxXuid, xboxGamertag]);
-  return user;
-}
-
-
-export async function updateUserBattleNet(userId, battleNetId, battleTag, region) {
-  const {
-    rows: [user],
-  } = await db.query(
-    `
-    UPDATE users
-    SET battle_net_id = $2,
-        battle_tag = $3,
-        battle_net_region = $4,
-        battle_net_connected_at = NOW()
-    WHERE user_id = $1
+    SET role_id = $1, updated_at = NOW()
+    WHERE user_id = $2 AND deleted_at IS NULL
     RETURNING *
-    `,
-    [userId, battleNetId, battleTag, region]
-  );
+  `;
+  const {
+    rows: [user],
+  } = await db.query(sql, [newRoleId, userId]);
+  return user;
+}
 
+/** Sets a user's active flag true/false. Used for deactivate/reactivate. */
+export async function setUserActive(userId, active) {
+  const sql = `
+    UPDATE users
+    SET active = $1, updated_at = NOW()
+    WHERE user_id = $2 AND deleted_at IS NULL
+    RETURNING *
+  `;
+  const {
+    rows: [user],
+  } = await db.query(sql, [active, userId]);
+  return user;
+}
+
+/**
+ * Soft-deletes a user by setting deleted_at to the current time.
+ * This does NOT remove the row — getUsers() and login already filter
+ * out anything where deleted_at IS NOT NULL, so a soft-deleted user
+ * effectively disappears from the app without losing their data.
+ */
+export async function softDeleteUser(userId) {
+  const sql = `
+    UPDATE users
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE user_id = $1 AND deleted_at IS NULL
+    RETURNING *
+  `;
+  const {
+    rows: [user],
+  } = await db.query(sql, [userId]);
   return user;
 }
