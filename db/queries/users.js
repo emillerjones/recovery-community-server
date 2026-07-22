@@ -12,6 +12,7 @@ export async function getUsers() {
 }
 
 export async function createUser(email, username, password, role_id = 100) {
+  email = email.toLowerCase();
   username = username.toLowerCase();
   const sql = `
     INSERT INTO users (email, username, password, role_id)
@@ -56,7 +57,7 @@ export async function getUserByEmailAndPassword(email, password) {
 
   const {
     rows: [user],
-  } = await db.query(sql, [email]);
+  } = await db.query(sql, [email.toLowerCase()]);
 
   if (!user) return null;
 

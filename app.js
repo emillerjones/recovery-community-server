@@ -7,6 +7,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import usersRouter from "#api/users"; 
 import contactRouter from "#api/contact";
+import forumRouter from "#api/forum";
 
 
 app.use(express.json());
@@ -18,6 +19,7 @@ app.use(getUserFromToken);
 
 app.use("/api/users", usersRouter);
 app.use("/api/contact", contactRouter);
+app.use("/api/forum", forumRouter);
 
 
 app.use((err, req, res, next) => {
