@@ -71,7 +71,7 @@ export async function getForumPosts({ categorySlug, search } = {}) {
   return rows;
 }
 
-export async function getForumPostById(postId) {
+export async function getForumPostById(postId, viewerId) {
   const {
     rows: [post],
   } = await db.query(
@@ -81,7 +81,13 @@ export async function getForumPostById(postId) {
         c.name AS category_name,
         c.slug AS category_slug,
         u.username AS author_username,
-        u.avatar_url AS author_avatar_url
+        u.avatar_url AS author_avatar_url,
+        EXISTS(
+          SELECT 1 FROM forum_post_reports fpr
+          WHERE fpr.post_id = p.post_id
+            AND fpr.reporter_id = $2
+            AND fpr.resolved_at IS NULL
+        ) AS reported_by_me
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
@@ -89,12 +95,12 @@ export async function getForumPostById(postId) {
         AND p.active = TRUE
         AND p.deleted_at IS NULL
     `,
-    [postId]
+    [postId, viewerId]
   );
   return post;
 }
 
-export async function getForumComments(postId) {
+export async function getForumComments(postId, viewerId) {
   const { rows } = await db.query(
     `
       SELECT
@@ -107,13 +113,19 @@ export async function getForumComments(postId) {
         cm.deleted_at,
         CASE WHEN cm.deleted_at IS NULL THEN cm.body ELSE NULL END AS body,
         CASE WHEN cm.deleted_at IS NULL THEN u.username ELSE NULL END AS author_username,
-        CASE WHEN cm.deleted_at IS NULL THEN u.avatar_url ELSE NULL END AS author_avatar_url
+        CASE WHEN cm.deleted_at IS NULL THEN u.avatar_url ELSE NULL END AS author_avatar_url,
+        EXISTS(
+          SELECT 1 FROM forum_comment_reports fcr
+          WHERE fcr.comment_id = cm.comment_id
+            AND fcr.reporter_id = $2
+            AND fcr.resolved_at IS NULL
+        ) AS reported_by_me
       FROM comments cm
       JOIN users u ON u.user_id = cm.author_id
       WHERE cm.post_id = $1
       ORDER BY cm.created_at
     `,
-    [postId]
+    [postId, viewerId]
   );
   return rows;
 }
@@ -247,4 +259,126 @@ export async function softDeleteForumComment(commentId, authorId, isModerator = 
     [commentId, authorId, isModerator]
   );
   return comment;
+}
+
+export async function reportForumPost(postId, reporterId, reason) {
+  const {
+    rows: [report],
+  } = await db.query(
+    `
+      INSERT INTO forum_post_reports (post_id, reporter_id, reason)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (post_id, reporter_id) DO NOTHING
+      RETURNING *
+    `,
+    [postId, reporterId, reason || null]
+  );
+  return report || null;
+}
+
+export async function unreportForumPost(postId, reporterId) {
+  const {
+    rows: [report],
+  } = await db.query(
+    `
+      DELETE FROM forum_post_reports
+      WHERE post_id = $1 AND reporter_id = $2
+      RETURNING *
+    `,
+    [postId, reporterId]
+  );
+  return report || null;
+}
+
+export async function reportForumComment(commentId, reporterId, reason) {
+  const {
+    rows: [report],
+  } = await db.query(
+    `
+      INSERT INTO forum_comment_reports (comment_id, reporter_id, reason)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (comment_id, reporter_id) DO NOTHING
+      RETURNING *
+    `,
+    [commentId, reporterId, reason || null]
+  );
+  return report || null;
+}
+
+export async function unreportForumComment(commentId, reporterId) {
+  const {
+    rows: [report],
+  } = await db.query(
+    `
+      DELETE FROM forum_comment_reports
+      WHERE comment_id = $1 AND reporter_id = $2
+      RETURNING *
+    `,
+    [commentId, reporterId]
+  );
+  return report || null;
+}
+
+export async function getReportedForumPosts() {
+  const { rows } = await db.query(`
+    SELECT
+      p.post_id,
+      p.title,
+      p.body,
+      p.author_id,
+      u.username AS author_username,
+      COUNT(fpr.report_id)::INT AS report_count,
+      MAX(fpr.created_at) AS last_reported_at
+    FROM forum_post_reports fpr
+    JOIN posts p ON p.post_id = fpr.post_id
+    JOIN users u ON u.user_id = p.author_id
+    WHERE fpr.resolved_at IS NULL
+    GROUP BY p.post_id, u.username
+    ORDER BY report_count DESC, last_reported_at DESC
+  `);
+  return rows;
+}
+
+export async function getReportedForumComments() {
+  const { rows } = await db.query(`
+    SELECT
+      cm.comment_id,
+      cm.post_id,
+      cm.body,
+      cm.author_id,
+      u.username AS author_username,
+      COUNT(fcr.report_id)::INT AS report_count,
+      MAX(fcr.created_at) AS last_reported_at
+    FROM forum_comment_reports fcr
+    JOIN comments cm ON cm.comment_id = fcr.comment_id
+    JOIN users u ON u.user_id = cm.author_id
+    WHERE fcr.resolved_at IS NULL
+    GROUP BY cm.comment_id, u.username
+    ORDER BY report_count DESC, last_reported_at DESC
+  `);
+  return rows;
+}
+
+export async function resolveForumPostReports(postId, resolvedBy) {
+  const { rowCount } = await db.query(
+    `
+      UPDATE forum_post_reports
+      SET resolved_at = NOW(), resolved_by = $2
+      WHERE post_id = $1 AND resolved_at IS NULL
+    `,
+    [postId, resolvedBy]
+  );
+  return rowCount;
+}
+
+export async function resolveForumCommentReports(commentId, resolvedBy) {
+  const { rowCount } = await db.query(
+    `
+      UPDATE forum_comment_reports
+      SET resolved_at = NOW(), resolved_by = $2
+      WHERE comment_id = $1 AND resolved_at IS NULL
+    `,
+    [commentId, resolvedBy]
+  );
+  return rowCount;
 }

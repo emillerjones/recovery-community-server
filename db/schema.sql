@@ -110,3 +110,45 @@ CREATE TABLE IF NOT EXISTS comments (
 
 
 
+-- ************************ FORUM REPORTS ************************ --
+
+CREATE TABLE IF NOT EXISTS forum_post_reports (
+  report_id SERIAL PRIMARY KEY,
+
+  post_id INT NOT NULL
+    REFERENCES posts(post_id)
+    ON DELETE CASCADE,
+
+  reporter_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  reason TEXT,
+
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMP DEFAULT NULL,
+  resolved_by INT REFERENCES users(user_id),
+
+  UNIQUE (post_id, reporter_id)
+);
+
+CREATE TABLE IF NOT EXISTS forum_comment_reports (
+  report_id SERIAL PRIMARY KEY,
+
+  comment_id INT NOT NULL
+    REFERENCES comments(comment_id)
+    ON DELETE CASCADE,
+
+  reporter_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  reason TEXT,
+
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMP DEFAULT NULL,
+  resolved_by INT REFERENCES users(user_id),
+
+  UNIQUE (comment_id, reporter_id)
+);
+
+
+

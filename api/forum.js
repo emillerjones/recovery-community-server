@@ -7,8 +7,16 @@ import {
   getForumComments,
   getForumPostById,
   getForumPosts,
+  getReportedForumComments,
+  getReportedForumPosts,
+  reportForumComment,
+  reportForumPost,
+  resolveForumCommentReports,
+  resolveForumPostReports,
   softDeleteForumComment,
   softDeleteForumPost,
+  unreportForumComment,
+  unreportForumPost,
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
@@ -26,10 +34,10 @@ router.get("/posts", async (req, res) => {
 });
 
 router.get("/posts/:id", async (req, res) => {
-  const post = await getForumPostById(Number(req.params.id));
+  const post = await getForumPostById(Number(req.params.id), req.user.user_id);
   if (!post) return res.status(404).send({ message: "Post not found." });
 
-  const comments = await getForumComments(post.post_id);
+  const comments = await getForumComments(post.post_id, req.user.user_id);
   res.send({ post, comments });
 });
 
@@ -118,6 +126,62 @@ router.patch("/posts/:id/moderation", async (req, res) => {
   const post = await updateForumPostModeration(Number(req.params.id), req.body);
   if (!post) return res.status(400).send({ message: "No valid moderation change was provided." });
   res.send(post);
+});
+
+router.post("/posts/:id/report", async (req, res) => {
+  const postId = Number(req.params.id);
+  const reason = req.body.reason?.trim() || null;
+
+  const report = await reportForumPost(postId, req.user.user_id, reason);
+  res.status(201).send({ reported: true, alreadyReported: !report });
+});
+
+router.delete("/posts/:id/report", async (req, res) => {
+  await unreportForumPost(Number(req.params.id), req.user.user_id);
+  res.send({ reported: false });
+});
+
+router.post("/posts/:id/comments/:commentId/report", async (req, res) => {
+  const commentId = Number(req.params.commentId);
+  const reason = req.body.reason?.trim() || null;
+
+  const report = await reportForumComment(commentId, req.user.user_id, reason);
+  res.status(201).send({ reported: true, alreadyReported: !report });
+});
+
+router.delete("/posts/:id/comments/:commentId/report", async (req, res) => {
+  await unreportForumComment(Number(req.params.commentId), req.user.user_id);
+  res.send({ reported: false });
+});
+
+router.get("/moderation/reports", async (req, res) => {
+  if (req.user.role_id > 50) {
+    return res.status(403).send({ message: "Moderator access required." });
+  }
+
+  const [posts, comments] = await Promise.all([
+    getReportedForumPosts(),
+    getReportedForumComments(),
+  ]);
+  res.send({ posts, comments });
+});
+
+router.patch("/moderation/reports/posts/:id/resolve", async (req, res) => {
+  if (req.user.role_id > 50) {
+    return res.status(403).send({ message: "Moderator access required." });
+  }
+
+  await resolveForumPostReports(Number(req.params.id), req.user.user_id);
+  res.send({ resolved: true });
+});
+
+router.patch("/moderation/reports/comments/:id/resolve", async (req, res) => {
+  if (req.user.role_id > 50) {
+    return res.status(403).send({ message: "Moderator access required." });
+  }
+
+  await resolveForumCommentReports(Number(req.params.id), req.user.user_id);
+  res.send({ resolved: true });
 });
 
 export default router;
