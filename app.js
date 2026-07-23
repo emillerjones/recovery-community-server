@@ -5,9 +5,10 @@ export default app;
 import getUserFromToken from "#middleware/getUserFromToken";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import usersRouter from "#api/users"; 
+import usersRouter from "#api/users";
 import contactRouter from "#api/contact";
 import forumRouter from "#api/forum";
+import notificationsRouter from "#api/notifications";
 
 
 app.use(express.json());
@@ -20,6 +21,7 @@ app.use(getUserFromToken);
 app.use("/api/users", usersRouter);
 app.use("/api/contact", contactRouter);
 app.use("/api/forum", forumRouter);
+app.use("/api/notifications", notificationsRouter);
 
 
 app.use((err, req, res, next) => {

@@ -83,11 +83,11 @@ export async function getForumPostById(postId, viewerId) {
         u.username AS author_username,
         u.avatar_url AS author_avatar_url,
         EXISTS(
-          SELECT 1 FROM forum_post_reports fpr
-          WHERE fpr.post_id = p.post_id
-            AND fpr.reporter_id = $2
-            AND fpr.resolved_at IS NULL
-        ) AS reported_by_me
+          SELECT 1 FROM forum_content_flags flags
+          WHERE flags.post_id = p.post_id
+            AND flags.flagged_by = $2
+            AND flags.reviewed_at IS NULL
+        ) AS flagged_by_me
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
@@ -115,11 +115,11 @@ export async function getForumComments(postId, viewerId) {
         CASE WHEN cm.deleted_at IS NULL THEN u.username ELSE NULL END AS author_username,
         CASE WHEN cm.deleted_at IS NULL THEN u.avatar_url ELSE NULL END AS author_avatar_url,
         EXISTS(
-          SELECT 1 FROM forum_comment_reports fcr
-          WHERE fcr.comment_id = cm.comment_id
-            AND fcr.reporter_id = $2
-            AND fcr.resolved_at IS NULL
-        ) AS reported_by_me
+          SELECT 1 FROM forum_content_flags flags
+          WHERE flags.comment_id = cm.comment_id
+            AND flags.flagged_by = $2
+            AND flags.reviewed_at IS NULL
+        ) AS flagged_by_me
       FROM comments cm
       JOIN users u ON u.user_id = cm.author_id
       WHERE cm.post_id = $1
@@ -163,6 +163,20 @@ export async function createForumComment({ postId, authorId, parentCommentId, bo
     [postId, authorId, parentCommentId, body.trim()]
   );
   return comment;
+}
+
+export async function getForumNotificationRecipient(postId, parentCommentId) {
+  if (parentCommentId) {
+    const {
+      rows: [comment],
+    } = await db.query(`SELECT author_id FROM comments WHERE comment_id = $1`, [parentCommentId]);
+    return comment?.author_id ?? null;
+  }
+
+  const {
+    rows: [post],
+  } = await db.query(`SELECT author_id FROM posts WHERE post_id = $1`, [postId]);
+  return post?.author_id ?? null;
 }
 
 export async function updateForumPostModeration(postId, { pinned, locked }) {
@@ -261,65 +275,77 @@ export async function softDeleteForumComment(commentId, authorId, isModerator = 
   return comment;
 }
 
-export async function reportForumPost(postId, reporterId, reason) {
+export async function flagForumPost(postId, flaggedBy, reason) {
   const {
-    rows: [report],
+    rows: [flag],
   } = await db.query(
     `
-      INSERT INTO forum_post_reports (post_id, reporter_id, reason)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (post_id, reporter_id) DO NOTHING
+      INSERT INTO forum_content_flags (post_id, flagged_by, reason)
+      SELECT post_id, $2, $3
+      FROM posts
+      WHERE post_id = $1
+        AND author_id <> $2
+        AND deleted_at IS NULL
+      ON CONFLICT DO NOTHING
       RETURNING *
     `,
-    [postId, reporterId, reason || null]
+    [postId, flaggedBy, reason || null]
   );
-  return report || null;
+  return flag || null;
 }
 
-export async function unreportForumPost(postId, reporterId) {
+export async function unflagForumPost(postId, flaggedBy) {
   const {
-    rows: [report],
+    rows: [flag],
   } = await db.query(
     `
-      DELETE FROM forum_post_reports
-      WHERE post_id = $1 AND reporter_id = $2
+      DELETE FROM forum_content_flags
+      WHERE post_id = $1
+        AND flagged_by = $2
+        AND reviewed_at IS NULL
       RETURNING *
     `,
-    [postId, reporterId]
+    [postId, flaggedBy]
   );
-  return report || null;
+  return flag || null;
 }
 
-export async function reportForumComment(commentId, reporterId, reason) {
+export async function flagForumComment(commentId, flaggedBy, reason) {
   const {
-    rows: [report],
+    rows: [flag],
   } = await db.query(
     `
-      INSERT INTO forum_comment_reports (comment_id, reporter_id, reason)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (comment_id, reporter_id) DO NOTHING
+      INSERT INTO forum_content_flags (comment_id, flagged_by, reason)
+      SELECT comment_id, $2, $3
+      FROM comments
+      WHERE comment_id = $1
+        AND author_id <> $2
+        AND deleted_at IS NULL
+      ON CONFLICT DO NOTHING
       RETURNING *
     `,
-    [commentId, reporterId, reason || null]
+    [commentId, flaggedBy, reason || null]
   );
-  return report || null;
+  return flag || null;
 }
 
-export async function unreportForumComment(commentId, reporterId) {
+export async function unflagForumComment(commentId, flaggedBy) {
   const {
-    rows: [report],
+    rows: [flag],
   } = await db.query(
     `
-      DELETE FROM forum_comment_reports
-      WHERE comment_id = $1 AND reporter_id = $2
+      DELETE FROM forum_content_flags
+      WHERE comment_id = $1
+        AND flagged_by = $2
+        AND reviewed_at IS NULL
       RETURNING *
     `,
-    [commentId, reporterId]
+    [commentId, flaggedBy]
   );
-  return report || null;
+  return flag || null;
 }
 
-export async function getReportedForumPosts() {
+export async function getFlaggedForumPosts() {
   const { rows } = await db.query(`
     SELECT
       p.post_id,
@@ -327,19 +353,20 @@ export async function getReportedForumPosts() {
       p.body,
       p.author_id,
       u.username AS author_username,
-      COUNT(fpr.report_id)::INT AS report_count,
-      MAX(fpr.created_at) AS last_reported_at
-    FROM forum_post_reports fpr
-    JOIN posts p ON p.post_id = fpr.post_id
+      COUNT(flags.flag_id)::INT AS flag_count,
+      MAX(flags.created_at) AS last_flagged_at
+    FROM forum_content_flags flags
+    JOIN posts p ON p.post_id = flags.post_id
     JOIN users u ON u.user_id = p.author_id
-    WHERE fpr.resolved_at IS NULL
+    WHERE flags.post_id IS NOT NULL
+      AND flags.reviewed_at IS NULL
     GROUP BY p.post_id, u.username
-    ORDER BY report_count DESC, last_reported_at DESC
+    ORDER BY flag_count DESC, last_flagged_at DESC
   `);
   return rows;
 }
 
-export async function getReportedForumComments() {
+export async function getFlaggedForumComments() {
   const { rows } = await db.query(`
     SELECT
       cm.comment_id,
@@ -347,38 +374,39 @@ export async function getReportedForumComments() {
       cm.body,
       cm.author_id,
       u.username AS author_username,
-      COUNT(fcr.report_id)::INT AS report_count,
-      MAX(fcr.created_at) AS last_reported_at
-    FROM forum_comment_reports fcr
-    JOIN comments cm ON cm.comment_id = fcr.comment_id
+      COUNT(flags.flag_id)::INT AS flag_count,
+      MAX(flags.created_at) AS last_flagged_at
+    FROM forum_content_flags flags
+    JOIN comments cm ON cm.comment_id = flags.comment_id
     JOIN users u ON u.user_id = cm.author_id
-    WHERE fcr.resolved_at IS NULL
+    WHERE flags.comment_id IS NOT NULL
+      AND flags.reviewed_at IS NULL
     GROUP BY cm.comment_id, u.username
-    ORDER BY report_count DESC, last_reported_at DESC
+    ORDER BY flag_count DESC, last_flagged_at DESC
   `);
   return rows;
 }
 
-export async function resolveForumPostReports(postId, resolvedBy) {
+export async function reviewForumPostFlags(postId, reviewedBy) {
   const { rowCount } = await db.query(
     `
-      UPDATE forum_post_reports
-      SET resolved_at = NOW(), resolved_by = $2
-      WHERE post_id = $1 AND resolved_at IS NULL
+      UPDATE forum_content_flags
+      SET reviewed_at = NOW(), reviewed_by = $2
+      WHERE post_id = $1 AND reviewed_at IS NULL
     `,
-    [postId, resolvedBy]
+    [postId, reviewedBy]
   );
   return rowCount;
 }
 
-export async function resolveForumCommentReports(commentId, resolvedBy) {
+export async function reviewForumCommentFlags(commentId, reviewedBy) {
   const { rowCount } = await db.query(
     `
-      UPDATE forum_comment_reports
-      SET resolved_at = NOW(), resolved_by = $2
-      WHERE comment_id = $1 AND resolved_at IS NULL
+      UPDATE forum_content_flags
+      SET reviewed_at = NOW(), reviewed_by = $2
+      WHERE comment_id = $1 AND reviewed_at IS NULL
     `,
-    [commentId, resolvedBy]
+    [commentId, reviewedBy]
   );
   return rowCount;
 }

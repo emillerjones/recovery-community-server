@@ -110,45 +110,70 @@ CREATE TABLE IF NOT EXISTS comments (
 
 
 
--- ************************ FORUM REPORTS ************************ --
+-- ************************ FORUM CONTENT FLAGS ************************ --
 
-CREATE TABLE IF NOT EXISTS forum_post_reports (
-  report_id SERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS forum_content_flags (
+  flag_id SERIAL PRIMARY KEY,
 
-  post_id INT NOT NULL
+  post_id INT
     REFERENCES posts(post_id)
     ON DELETE CASCADE,
 
-  reporter_id INT NOT NULL
-    REFERENCES users(user_id),
-
-  reason TEXT,
-
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  resolved_at TIMESTAMP DEFAULT NULL,
-  resolved_by INT REFERENCES users(user_id),
-
-  UNIQUE (post_id, reporter_id)
-);
-
-CREATE TABLE IF NOT EXISTS forum_comment_reports (
-  report_id SERIAL PRIMARY KEY,
-
-  comment_id INT NOT NULL
+  comment_id INT
     REFERENCES comments(comment_id)
     ON DELETE CASCADE,
 
-  reporter_id INT NOT NULL
+  flagged_by INT NOT NULL
     REFERENCES users(user_id),
 
   reason TEXT,
 
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  resolved_at TIMESTAMP DEFAULT NULL,
-  resolved_by INT REFERENCES users(user_id),
+  reviewed_at TIMESTAMP DEFAULT NULL,
+  reviewed_by INT REFERENCES users(user_id),
 
-  UNIQUE (comment_id, reporter_id)
+  CHECK (num_nonnulls(post_id, comment_id) = 1)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_open_post_flag_per_user
+  ON forum_content_flags(post_id, flagged_by)
+  WHERE post_id IS NOT NULL AND reviewed_at IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_open_comment_flag_per_user
+  ON forum_content_flags(comment_id, flagged_by)
+  WHERE comment_id IS NOT NULL AND reviewed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_forum_content_flags_review_queue
+  ON forum_content_flags(reviewed_at, created_at DESC);
+
+
+
+-- ************************ NOTIFICATIONS ************************ --
+
+CREATE TABLE IF NOT EXISTS notifications (
+  notification_id SERIAL PRIMARY KEY,
+
+  user_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  actor_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  type TEXT NOT NULL,
+
+  post_id INT
+    REFERENCES posts(post_id)
+    ON DELETE CASCADE,
+
+  comment_id INT
+    REFERENCES comments(comment_id)
+    ON DELETE CASCADE,
+
+  read_at TIMESTAMP DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread_created
+  ON notifications(user_id, read_at, created_at DESC);
 
 
