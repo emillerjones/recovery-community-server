@@ -9,6 +9,7 @@ import usersRouter from "#api/users";
 import contactRouter from "#api/contact";
 import forumRouter from "#api/forum";
 import notificationsRouter from "#api/notifications";
+import messagesRouter from "#api/messages";
 
 
 app.use(express.json());
@@ -22,6 +23,7 @@ app.use("/api/users", usersRouter);
 app.use("/api/contact", contactRouter);
 app.use("/api/forum", forumRouter);
 app.use("/api/notifications", notificationsRouter);
+app.use("/api/messages", messagesRouter);
 
 
 app.use((err, req, res, next) => {

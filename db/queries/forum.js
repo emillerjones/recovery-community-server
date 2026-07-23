@@ -18,8 +18,8 @@ export async function getForumCategories() {
   return rows;
 }
 
-export async function getForumPosts({ categorySlug, search } = {}) {
-  const values = [];
+export async function getForumPosts({ categorySlug, search, viewerId } = {}) {
+  const values = [viewerId ?? null];
   let categoryFilter = "";
   let searchFilter = "";
 
@@ -50,7 +50,11 @@ export async function getForumPosts({ categorySlug, search } = {}) {
         u.username AS author_username,
         u.avatar_url AS author_avatar_url,
         COUNT(cm.comment_id)::INT AS comment_count,
-        GREATEST(p.updated_at, COALESCE(MAX(cm.created_at), p.updated_at)) AS latest_activity_at
+        GREATEST(p.updated_at, COALESCE(MAX(cm.created_at), p.updated_at)) AS latest_activity_at,
+        EXISTS(
+          SELECT 1 FROM forum_saved_posts sp
+          WHERE sp.post_id = p.post_id AND sp.user_id = $1
+        ) AS saved_by_me
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
@@ -87,7 +91,11 @@ export async function getForumPostById(postId, viewerId) {
           WHERE flags.post_id = p.post_id
             AND flags.flagged_by = $2
             AND flags.reviewed_at IS NULL
-        ) AS flagged_by_me
+        ) AS flagged_by_me,
+        EXISTS(
+          SELECT 1 FROM forum_saved_posts sp
+          WHERE sp.post_id = p.post_id AND sp.user_id = $2
+        ) AS saved_by_me
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
@@ -151,14 +159,23 @@ export async function createForumComment({ postId, authorId, parentCommentId, bo
     rows: [comment],
   } = await db.query(
     `
-      INSERT INTO comments (post_id, author_id, parent_comment_id, body)
-      SELECT p.post_id, $2, $3, $4
-      FROM posts p
-      WHERE p.post_id = $1
-        AND p.active = TRUE
-        AND p.deleted_at IS NULL
-        AND p.locked = FALSE
-      RETURNING *
+      WITH inserted AS (
+        INSERT INTO comments (post_id, author_id, parent_comment_id, body)
+        SELECT p.post_id, $2, $3, $4
+        FROM posts p
+        WHERE p.post_id = $1
+          AND p.active = TRUE
+          AND p.deleted_at IS NULL
+          AND p.locked = FALSE
+        RETURNING *
+      )
+      SELECT
+        inserted.*,
+        u.username AS author_username,
+        u.avatar_url AS author_avatar_url,
+        FALSE AS flagged_by_me
+      FROM inserted
+      JOIN users u ON u.user_id = inserted.author_id
     `,
     [postId, authorId, parentCommentId, body.trim()]
   );
@@ -409,4 +426,22 @@ export async function reviewForumCommentFlags(commentId, reviewedBy) {
     [commentId, reviewedBy]
   );
   return rowCount;
+}
+
+export async function saveForumPost(postId, userId) {
+  await db.query(
+    `
+      INSERT INTO forum_saved_posts (user_id, post_id)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+    `,
+    [userId, postId]
+  );
+}
+
+export async function unsaveForumPost(postId, userId) {
+  await db.query(
+    `DELETE FROM forum_saved_posts WHERE user_id = $1 AND post_id = $2`,
+    [userId, postId]
+  );
 }

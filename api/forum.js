@@ -14,15 +14,17 @@ import {
   flagForumPost,
   reviewForumCommentFlags,
   reviewForumPostFlags,
+  saveForumPost,
   softDeleteForumComment,
   softDeleteForumPost,
   unflagForumComment,
   unflagForumPost,
+  unsaveForumPost,
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
 import { createNotification } from "#db/queries/notifications";
-import { notifyUser } from "#utils/socket";
+import { notifyThread, notifyUser } from "#utils/socket";
 
 const router = express.Router();
 
@@ -33,7 +35,11 @@ router.get("/categories", async (req, res) => {
 });
 
 router.get("/posts", async (req, res) => {
-  res.send(await getForumPosts({ categorySlug: req.query.category, search: req.query.search }));
+  res.send(await getForumPosts({
+    categorySlug: req.query.category,
+    search: req.query.search,
+    viewerId: req.user.user_id,
+  }));
 });
 
 router.get("/posts/:id", async (req, res) => {
@@ -90,6 +96,8 @@ router.post("/posts/:id/comments", async (req, res) => {
   // If the post is missing, deleted, or locked, no comment was created.
   // Stop here so we do not try to notify anyone about a reply that does not exist.
   if (!comment) return res.status(400).send({ message: "This conversation is unavailable or locked." });
+
+  notifyThread(postId, "new_comment", comment);
 
   try {
     // TRACE STEP 2: Decide who should receive the notification.
@@ -178,6 +186,16 @@ router.post("/posts/:id/flag", async (req, res) => {
 router.delete("/posts/:id/flag", async (req, res) => {
   await unflagForumPost(Number(req.params.id), req.user.user_id);
   res.send({ flagged: false });
+});
+
+router.post("/posts/:id/save", async (req, res) => {
+  await saveForumPost(Number(req.params.id), req.user.user_id);
+  res.status(201).send({ saved: true });
+});
+
+router.delete("/posts/:id/save", async (req, res) => {
+  await unsaveForumPost(Number(req.params.id), req.user.user_id);
+  res.send({ saved: false });
 });
 
 router.post("/posts/:id/comments/:commentId/flag", async (req, res) => {

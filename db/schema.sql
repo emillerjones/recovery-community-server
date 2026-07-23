@@ -177,3 +177,69 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_unread_created
   ON notifications(user_id, read_at, created_at DESC);
 
 
+
+-- ************************ DIRECT MESSAGES ************************ --
+
+-- One row per pair of members who have ever messaged each other.
+-- user_one_id is always the smaller user_id of the pair, so a
+-- conversation between users 5 and 9 is always stored as (5, 9) —
+-- never duplicated as (9, 5). That makes "find or create the
+-- conversation between A and B" a single deterministic lookup.
+CREATE TABLE IF NOT EXISTS direct_conversations (
+  conversation_id SERIAL PRIMARY KEY,
+
+  user_one_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  user_two_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
+  CHECK (user_one_id < user_two_id),
+  UNIQUE (user_one_id, user_two_id)
+);
+
+CREATE TABLE IF NOT EXISTS direct_messages (
+  message_id SERIAL PRIMARY KEY,
+
+  conversation_id INT NOT NULL
+    REFERENCES direct_conversations(conversation_id)
+    ON DELETE CASCADE,
+
+  sender_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  body TEXT NOT NULL
+    CHECK (LENGTH(TRIM(body)) > 0),
+
+  read_at TIMESTAMP DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_direct_messages_conversation_created
+  ON direct_messages(conversation_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_direct_messages_unread
+  ON direct_messages(conversation_id, sender_id, read_at);
+
+
+
+-- ************************ SAVED POSTS ************************ --
+
+-- A private, silent bookmark — saving a post never notifies anyone
+-- and never shows a count to other members. Just a personal list.
+CREATE TABLE IF NOT EXISTS forum_saved_posts (
+  user_id INT NOT NULL
+    REFERENCES users(user_id),
+
+  post_id INT NOT NULL
+    REFERENCES posts(post_id)
+    ON DELETE CASCADE,
+
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
+  PRIMARY KEY (user_id, post_id)
+);
+
+
