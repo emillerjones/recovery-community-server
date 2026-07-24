@@ -33,10 +33,11 @@ try {
   const owner = await createUser("owner@example.com", "owner", "owner-password", 1);
   const completedProfile = await updateOwnProfile(owner.user_id, {
     bio: "Community founder", phoneNumber: "555-0100",
-    dateOfBirth: "1980-01-02", gender: "Woman",
+    dateOfBirth: "1980-01-02", gender: "Woman", avatarUrl: "preset:Butterfly:lavender",
   });
   assert.equal(completedProfile.bio, "Community founder");
   assert.equal(new Date(completedProfile.date_of_birth).toISOString().slice(0, 10), "1980-01-02");
+  assert.equal(completedProfile.avatar_url, "preset:Butterfly:lavender");
 
   // Flow 1: standard applicant verifies, becomes pending, then is approved.
   const standardSecret = createSecureToken();

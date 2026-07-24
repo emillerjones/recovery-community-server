@@ -166,17 +166,18 @@ export async function softDeleteUser(userId) {
 }
 
 /** Updates only the fields a member is allowed to manage on their own profile. */
-export async function updateOwnProfile(userId, { bio, phoneNumber, dateOfBirth, gender }) {
+export async function updateOwnProfile(userId, { bio, phoneNumber, dateOfBirth, gender, avatarUrl }) {
   const { rows: [user] } = await db.query(
     `UPDATE users
      SET bio = $2,
          phone_number = $3,
          date_of_birth = $4,
          gender = $5,
+         avatar_url = $6,
          updated_at = NOW()
      WHERE user_id = $1 AND deleted_at IS NULL
      RETURNING *`,
-    [userId, bio || null, phoneNumber || null, dateOfBirth || null, gender || null]
+    [userId, bio || null, phoneNumber || null, dateOfBirth || null, gender || null, avatarUrl || null]
   );
   return user;
 }

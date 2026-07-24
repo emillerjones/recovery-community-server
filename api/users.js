@@ -106,10 +106,16 @@ router.patch("/me/profile", async (req, res) => {
   const phoneNumber = typeof req.body?.phoneNumber === "string" ? req.body.phoneNumber.trim() : "";
   const dateOfBirth = typeof req.body?.dateOfBirth === "string" ? req.body.dateOfBirth.trim() : "";
   const gender = typeof req.body?.gender === "string" ? req.body.gender.trim() : "";
+  const avatarUrl = typeof req.body?.avatarPreset === "string" ? req.body.avatarPreset.trim() : "";
+  const avatarColors = new Set(["forest", "sage", "amber", "terracotta", "lavender", "ocean", "sky", "rose", "plum", "moss", "clay", "slate", "sunshine", "coral", "mint", "midnight"]);
 
   if (bio.length > 1000) return res.status(400).send({ message: "Bio must be 1,000 characters or fewer." });
   if (phoneNumber.length > 30) return res.status(400).send({ message: "Phone number must be 30 characters or fewer." });
   if (gender.length > 50) return res.status(400).send({ message: "Gender must be 50 characters or fewer." });
+  const avatarMatch = /^preset:([A-Za-z0-9]+):([a-z-]{2,24})$/.exec(avatarUrl);
+  if (avatarUrl && (!avatarMatch || !avatarColors.has(avatarMatch[2]))) {
+    return res.status(400).send({ message: "Choose a valid preset avatar." });
+  }
   if (dateOfBirth) {
     const validFormat = /^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth);
     const parsed = new Date(`${dateOfBirth}T00:00:00Z`);
@@ -119,9 +125,9 @@ router.patch("/me/profile", async (req, res) => {
     }
   }
 
-  // PROFILE TRACE STEP 4: this query updates only the four allowed columns and
+  // PROFILE TRACE STEP 4: this query updates only the member-editable columns and
   // returns the fresh row so the screen can immediately reflect the saved data.
-  const user = await updateOwnProfile(req.user.user_id, { bio, phoneNumber, dateOfBirth, gender });
+  const user = await updateOwnProfile(req.user.user_id, { bio, phoneNumber, dateOfBirth, gender, avatarUrl });
   if (!user) return res.status(404).send({ message: "Profile not found." });
   delete user.password;
   delete user.notes;
