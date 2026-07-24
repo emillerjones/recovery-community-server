@@ -7,6 +7,7 @@ import {
   setUserActive,
   softDeleteUser,
   hardDeleteTestUser,
+  updateOwnProfile,
   searchActiveUsersForMention,
 } from "#db/queries/users";
 import requireBody from "#middleware/requireBody";
@@ -89,12 +90,42 @@ router.get("/me", async (req, res) => {
     }
     
     delete user.password; // Safety padding
+    delete user.notes; // Staff-only notes never belong in a member response.
     
     //FIXED HANDSHAKE: Returns the rich 'user' database query object instead of req.user
     res.send(user);
   } catch (err) {
     res.status(500).send("Server profile synchronization failure");
   }
+});
+
+router.patch("/me/profile", async (req, res) => {
+  // PROFILE TRACE STEP 3: Profile.jsx sends only member-editable fields here.
+  // Username, email, role, status, and staff notes are intentionally ignored.
+  const bio = typeof req.body?.bio === "string" ? req.body.bio.trim() : "";
+  const phoneNumber = typeof req.body?.phoneNumber === "string" ? req.body.phoneNumber.trim() : "";
+  const dateOfBirth = typeof req.body?.dateOfBirth === "string" ? req.body.dateOfBirth.trim() : "";
+  const gender = typeof req.body?.gender === "string" ? req.body.gender.trim() : "";
+
+  if (bio.length > 1000) return res.status(400).send({ message: "Bio must be 1,000 characters or fewer." });
+  if (phoneNumber.length > 30) return res.status(400).send({ message: "Phone number must be 30 characters or fewer." });
+  if (gender.length > 50) return res.status(400).send({ message: "Gender must be 50 characters or fewer." });
+  if (dateOfBirth) {
+    const validFormat = /^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth);
+    const parsed = new Date(`${dateOfBirth}T00:00:00Z`);
+    const exactDate = !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === dateOfBirth;
+    if (!validFormat || !exactDate || parsed > new Date()) {
+      return res.status(400).send({ message: "Enter a valid date of birth that is not in the future." });
+    }
+  }
+
+  // PROFILE TRACE STEP 4: this query updates only the four allowed columns and
+  // returns the fresh row so the screen can immediately reflect the saved data.
+  const user = await updateOwnProfile(req.user.user_id, { bio, phoneNumber, dateOfBirth, gender });
+  if (!user) return res.status(404).send({ message: "Profile not found." });
+  delete user.password;
+  delete user.notes;
+  res.send(user);
 });
 
 router.get("/mention-search", async (req, res) => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import db from "#db/client";
-import { createUser, hardDeleteTestUser } from "#db/queries/users";
+import { createUser, hardDeleteTestUser, updateOwnProfile } from "#db/queries/users";
 import { createRegistration, verifyEmail } from "#db/queries/registration";
 import {
   createPersonalInvite, createSharedCode, reviewApplication,
@@ -31,6 +31,12 @@ try {
   await db.query(`INSERT INTO user_roles (role_id, role_name) VALUES
     (1, 'owner'), (10, 'administrator'), (50, 'moderator'), (100, 'member')`);
   const owner = await createUser("owner@example.com", "owner", "owner-password", 1);
+  const completedProfile = await updateOwnProfile(owner.user_id, {
+    bio: "Community founder", phoneNumber: "555-0100",
+    dateOfBirth: "1980-01-02", gender: "Woman",
+  });
+  assert.equal(completedProfile.bio, "Community founder");
+  assert.equal(new Date(completedProfile.date_of_birth).toISOString().slice(0, 10), "1980-01-02");
 
   // Flow 1: standard applicant verifies, becomes pending, then is approved.
   const standardSecret = createSecureToken();

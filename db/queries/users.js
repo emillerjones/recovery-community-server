@@ -165,6 +165,22 @@ export async function softDeleteUser(userId) {
   return user;
 }
 
+/** Updates only the fields a member is allowed to manage on their own profile. */
+export async function updateOwnProfile(userId, { bio, phoneNumber, dateOfBirth, gender }) {
+  const { rows: [user] } = await db.query(
+    `UPDATE users
+     SET bio = $2,
+         phone_number = $3,
+         date_of_birth = $4,
+         gender = $5,
+         updated_at = NOW()
+     WHERE user_id = $1 AND deleted_at IS NULL
+     RETURNING *`,
+    [userId, bio || null, phoneNumber || null, dateOfBirth || null, gender || null]
+  );
+  return user;
+}
+
 /**
  * Permanently removes an unused member account created while testing signup.
  * This is deliberately one PostgreSQL statement: every cleanup succeeds
