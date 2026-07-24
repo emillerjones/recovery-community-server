@@ -415,6 +415,7 @@ export async function getFlaggedForumPosts() {
       p.body,
       p.author_id,
       u.username AS author_username,
+      u.avatar_url AS author_avatar_url,
       COUNT(flags.flag_id)::INT AS flag_count,
       MAX(flags.created_at) AS last_flagged_at
     FROM forum_content_flags flags
@@ -422,7 +423,7 @@ export async function getFlaggedForumPosts() {
     JOIN users u ON u.user_id = p.author_id
     WHERE flags.post_id IS NOT NULL
       AND flags.reviewed_at IS NULL
-    GROUP BY p.post_id, u.username
+    GROUP BY p.post_id, u.username, u.avatar_url
     ORDER BY flag_count DESC, last_flagged_at DESC
   `);
   return rows;
@@ -436,6 +437,7 @@ export async function getFlaggedForumComments() {
       cm.body,
       cm.author_id,
       u.username AS author_username,
+      u.avatar_url AS author_avatar_url,
       COUNT(flags.flag_id)::INT AS flag_count,
       MAX(flags.created_at) AS last_flagged_at
     FROM forum_content_flags flags
@@ -443,7 +445,7 @@ export async function getFlaggedForumComments() {
     JOIN users u ON u.user_id = cm.author_id
     WHERE flags.comment_id IS NOT NULL
       AND flags.reviewed_at IS NULL
-    GROUP BY cm.comment_id, u.username
+    GROUP BY cm.comment_id, u.username, u.avatar_url
     ORDER BY flag_count DESC, last_flagged_at DESC
   `);
   return rows;

@@ -64,7 +64,8 @@ router.post("/login", requireBody(["email", "password"]), async (req, res) => {
     const token = createToken({ 
       id: user.user_id,
       username: user.username,
-      role_id: user.role_id
+      role_id: user.role_id,
+      avatar_url: user.avatar_url
     });
     
     delete user.password;
