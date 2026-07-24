@@ -108,7 +108,15 @@ export async function getForumPostById(postId, viewerId) {
         (
           SELECT reaction_type FROM forum_reactions
           WHERE post_id = p.post_id AND user_id = $2
-        ) AS my_reaction
+        ) AS my_reaction,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'user_id', m.mentioned_user_id,
+            'username', m.username_snapshot
+          ) ORDER BY m.mention_id)
+          FROM forum_mentions m
+          WHERE m.post_id = p.post_id
+        ), '[]'::jsonb) AS mentions
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
@@ -153,7 +161,15 @@ export async function getForumComments(postId, viewerId) {
         (
           SELECT reaction_type FROM forum_reactions
           WHERE comment_id = cm.comment_id AND user_id = $2
-        ) AS my_reaction
+        ) AS my_reaction,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'user_id', m.mentioned_user_id,
+            'username', m.username_snapshot
+          ) ORDER BY m.mention_id)
+          FROM forum_mentions m
+          WHERE m.comment_id = cm.comment_id
+        ), '[]'::jsonb) AS mentions
       FROM comments cm
       JOIN users u ON u.user_id = cm.author_id
       WHERE cm.post_id = $1
@@ -201,7 +217,8 @@ export async function createForumComment({ postId, authorId, parentCommentId, bo
         u.avatar_url AS author_avatar_url,
         FALSE AS flagged_by_me,
         '{}'::jsonb AS reactions,
-        NULL::TEXT AS my_reaction
+        NULL::TEXT AS my_reaction,
+        '[]'::jsonb AS mentions
       FROM inserted
       JOIN users u ON u.user_id = inserted.author_id
     `,
@@ -475,6 +492,9 @@ export async function unsaveForumPost(postId, userId) {
 }
 
 export async function setForumPostReaction(postId, userId, reactionType) {
+  // REACTION TRACE STEP 5A: This is where a post reaction reaches PostgreSQL.
+  // INSERT creates the member's first reaction. ON CONFLICT updates that same
+  // row when the member changes from one reaction type to another.
   const { rows: [reaction] } = await db.query(
     `
       WITH prior AS (
@@ -494,10 +514,14 @@ export async function setForumPostReaction(postId, userId, reactionType) {
 }
 
 export async function removeForumPostReaction(postId, userId) {
+  // REACTION TRACE STEP 5C: DELETE the one row connecting this member to this
+  // post. Control then returns to the DELETE route in api/forum.js.
   await db.query(`DELETE FROM forum_reactions WHERE post_id = $1 AND user_id = $2`, [postId, userId]);
 }
 
 export async function setForumCommentReaction(commentId, userId, reactionType) {
+  // REACTION TRACE STEP 5B: Same database behavior as a post reaction, except
+  // comment_id connects the row to one specific forum reply.
   const { rows: [reaction] } = await db.query(
     `
       WITH prior AS (
@@ -521,6 +545,7 @@ export async function setForumCommentReaction(commentId, userId, reactionType) {
 }
 
 export async function removeForumCommentReaction(commentId, userId) {
+  // REACTION TRACE STEP 5D: Remove this member's reaction from this reply.
   await db.query(`DELETE FROM forum_reactions WHERE comment_id = $1 AND user_id = $2`, [commentId, userId]);
 }
 
@@ -537,4 +562,26 @@ export async function getForumReactionTarget({ postId, commentId }) {
     [postId]
   );
   return target || null;
+}
+
+export async function createForumMentions({ mentionedUsers, mentionedBy, postId = null, commentId = null }) {
+  if (!mentionedUsers.length) return [];
+
+  // MENTION TRACE STEP 9: The post/reply now exists. Insert one row for each
+  // verified @member. The partial unique indexes guarantee the same member can
+  // only be mentioned once in this particular post or reply.
+  const userIds = mentionedUsers.map((user) => user.user_id);
+  const usernames = mentionedUsers.map((user) => user.username);
+  const { rows } = await db.query(
+    `
+      INSERT INTO forum_mentions
+        (mentioned_user_id, mentioned_by, post_id, comment_id, username_snapshot)
+      SELECT member.user_id, $3, $4, $5, member.username
+      FROM unnest($1::INT[], $2::TEXT[]) AS member(user_id, username)
+      ON CONFLICT DO NOTHING
+      RETURNING mentioned_user_id, username_snapshot
+    `,
+    [userIds, usernames, mentionedBy, postId, commentId]
+  );
+  return rows;
 }

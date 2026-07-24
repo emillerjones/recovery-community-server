@@ -48,6 +48,42 @@ export async function getUserByUsername(username) {
   return user;
 }
 
+export async function searchActiveUsersForMention(search, excludeUserId, limit = 8) {
+  // MENTION TRACE STEP 4: The authenticated autocomplete route calls this
+  // query. Return only public mention-picker fields—never email or password.
+  const { rows } = await db.query(
+    `
+      SELECT user_id, username, avatar_url
+      FROM users
+      WHERE active = TRUE
+        AND deleted_at IS NULL
+        AND user_id <> $2
+        AND username ILIKE $1
+      ORDER BY
+        CASE WHEN username ILIKE $3 THEN 0 ELSE 1 END,
+        username
+      LIMIT $4
+    `,
+    [`%${search}%`, excludeUserId, `${search}%`, limit]
+  );
+  return rows;
+}
+
+export async function getActiveMentionUsers(userIds) {
+  if (!userIds.length) return [];
+  const { rows } = await db.query(
+    `
+      SELECT user_id, username
+      FROM users
+      WHERE user_id = ANY($1::INT[])
+        AND active = TRUE
+        AND deleted_at IS NULL
+    `,
+    [userIds]
+  );
+  return rows;
+}
+
 export async function getUserByEmailAndPassword(email, password) {
   const sql = `
     SELECT *

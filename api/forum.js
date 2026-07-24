@@ -2,6 +2,7 @@ import express from "express";
 import requireUser from "#middleware/requireUser";
 import {
   createForumComment,
+  createForumMentions,
   createForumPost,
   getForumCategories,
   getForumComments,
@@ -29,6 +30,7 @@ import {
   updateForumPostModeration,
 } from "#db/queries/forum";
 import { createNotification, createOrGroupReactionNotification } from "#db/queries/notifications";
+import { getActiveMentionUsers } from "#db/queries/users";
 import { notifyThread, notifyUser } from "#utils/socket";
 
 const router = express.Router();
@@ -42,6 +44,48 @@ const REACTION_TYPES = new Set([
   "inspiring",
   "care",
 ]);
+const MAX_MENTIONS = 5;
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function resolveMentionUsers(body, requestedUserIds, actorId) {
+  // MENTION TRACE STEP 7: Never trust IDs sent by the browser. Normalize and
+  // cap them, look up active accounts, and keep a member only if their visible
+  // @username truly appears in the submitted text. This blocks hidden pings.
+  if (!Array.isArray(requestedUserIds)) return [];
+  const uniqueIds = [...new Set(requestedUserIds.map(Number).filter(Number.isInteger))];
+  if (uniqueIds.length > MAX_MENTIONS) {
+    const error = new Error(`You can mention up to ${MAX_MENTIONS} members.`);
+    error.status = 400;
+    throw error;
+  }
+
+  const users = await getActiveMentionUsers(uniqueIds.filter((id) => id !== actorId));
+  return users.filter((user) => {
+    const visibleMention = new RegExp(`(^|\\s)@${escapeRegExp(user.username)}(?=\\s|[.,!?;:]|$)`, "i");
+    return visibleMention.test(body);
+  });
+}
+
+async function notifyMentionedUsers({ mentionedUsers, actorId, postId, commentId = null, skipUserIds = [] }) {
+  // MENTION TRACE STEP 10: Save and push one alert per mentioned member. The
+  // skip list prevents a direct-reply recipient from receiving both a reply
+  // alert and a mention alert for the same comment.
+  const skipped = new Set([actorId, ...skipUserIds]);
+  for (const user of mentionedUsers) {
+    if (skipped.has(user.user_id)) continue;
+    const notification = await createNotification({
+      userId: user.user_id,
+      actorId,
+      type: commentId ? "mention_in_comment" : "mention_in_post",
+      postId,
+      commentId,
+    });
+    notifyUser(user.user_id, "notification", notification);
+  }
+}
 
 router.use(requireUser);
 
@@ -74,6 +118,15 @@ router.post("/posts", async (req, res) => {
     return res.status(400).send({ message: "Category, title, and message are required." });
   }
 
+  let mentionedUsers;
+  try {
+    mentionedUsers = await resolveMentionUsers(body, req.body.mentioned_user_ids, req.user.user_id);
+  } catch (error) {
+    return res.status(error.status || 400).send({ message: error.message });
+  }
+
+  // MENTION TRACE STEP 8A: The server has validated the selected members.
+  // Save the normal forum post first, then connect its new ID to mention rows.
   const post = await createForumPost({
     categoryId,
     authorId: req.user.user_id,
@@ -82,6 +135,32 @@ router.post("/posts", async (req, res) => {
   });
 
   if (!post) return res.status(400).send({ message: "That category is unavailable." });
+  let savedMentions = [];
+  try {
+    savedMentions = await createForumMentions({
+      mentionedUsers,
+      mentionedBy: req.user.user_id,
+      postId: post.post_id,
+    });
+  } catch (error) {
+    // The post already exists. Do not return a failure that could make the
+    // browser retry and create a duplicate post.
+    console.error("Failed to save new-post mentions:", error);
+  }
+  post.mentions = savedMentions.map((mention) => ({
+    user_id: mention.mentioned_user_id,
+    username: mention.username_snapshot,
+  }));
+  try {
+    const savedIds = new Set(savedMentions.map((mention) => mention.mentioned_user_id));
+    await notifyMentionedUsers({
+      mentionedUsers: mentionedUsers.filter((user) => savedIds.has(user.user_id)),
+      actorId: req.user.user_id,
+      postId: post.post_id,
+    });
+  } catch (error) {
+    console.error("Failed to create new-post mention notification:", error);
+  }
   res.status(201).send(post);
 });
 
@@ -99,6 +178,13 @@ router.post("/posts/:id/comments", async (req, res) => {
     return res.status(400).send({ message: "Invalid parent comment." });
   }
 
+  let mentionedUsers;
+  try {
+    mentionedUsers = await resolveMentionUsers(body, req.body.mentioned_user_ids, req.user.user_id);
+  } catch (error) {
+    return res.status(error.status || 400).send({ message: error.message });
+  }
+
   // TRACE STEP 1: Save the member's reply in the comments table first.
   // createForumComment() contains the SQL and returns the newly saved row.
   const comment = await createForumComment({
@@ -111,6 +197,25 @@ router.post("/posts/:id/comments", async (req, res) => {
   // If the post is missing, deleted, or locked, no comment was created.
   // Stop here so we do not try to notify anyone about a reply that does not exist.
   if (!comment) return res.status(400).send({ message: "This conversation is unavailable or locked." });
+
+  // MENTION TRACE STEP 8B: The reply has its permanent comment ID now, so its
+  // verified mentioned members can be connected to that exact reply.
+  let savedMentions = [];
+  try {
+    savedMentions = await createForumMentions({
+      mentionedUsers,
+      mentionedBy: req.user.user_id,
+      commentId: comment.comment_id,
+    });
+  } catch (error) {
+    // As with reply notifications, a secondary mention failure must not make
+    // the client retry a reply that PostgreSQL already saved.
+    console.error("Failed to save reply mentions:", error);
+  }
+  comment.mentions = savedMentions.map((mention) => ({
+    user_id: mention.mentioned_user_id,
+    username: mention.username_snapshot,
+  }));
 
   notifyThread(postId, "new_comment", comment);
 
@@ -138,6 +243,15 @@ router.post("/posts/:id/comments", async (req, res) => {
       // recipient is offline and will be fetched when they return.
       notifyUser(recipientId, "notification", notification);
     }
+
+    const savedIds = new Set(savedMentions.map((mention) => mention.mentioned_user_id));
+    await notifyMentionedUsers({
+      mentionedUsers: mentionedUsers.filter((user) => savedIds.has(user.user_id)),
+      actorId: req.user.user_id,
+      postId,
+      commentId: comment.comment_id,
+      skipUserIds: recipientId ? [recipientId] : [],
+    });
   } catch (error) {
     // The reply is already saved. A notification failure should not make
     // the client retry the reply and accidentally create a duplicate.
@@ -214,6 +328,10 @@ router.delete("/posts/:id/save", async (req, res) => {
 });
 
 async function notifyReactionAuthor({ req, postId, commentId = null }) {
+  // REACTION TRACE STEP 6: A brand-new reaction reaches this helper after the
+  // database save. Find the author, create/update one grouped notification,
+  // and push it to that author's browser. Changes to an existing reaction and
+  // reactions on your own content deliberately skip this notification.
   const target = await getForumReactionTarget({ postId, commentId });
   if (!target || target.author_id === req.user.user_id) return;
 
@@ -227,40 +345,56 @@ async function notifyReactionAuthor({ req, postId, commentId = null }) {
 }
 
 router.put("/posts/:id/reaction", async (req, res) => {
+  // REACTION TRACE STEP 4A: PUT requests from togglePostReaction() arrive
+  // here. Validate the URL ID and the reaction name before touching the DB.
   const postId = Number(req.params.id);
   const reactionType = req.body.reaction_type;
   if (!Number.isInteger(postId) || !REACTION_TYPES.has(reactionType)) {
     return res.status(400).send({ message: "Choose a valid reaction." });
   }
 
+  // Continue at REACTION TRACE STEP 5A in db/queries/forum.js. These three
+  // values identify the post, logged-in member, and selected reaction.
   const reaction = await setForumPostReaction(postId, req.user.user_id, reactionType);
   if (!reaction) return res.status(404).send({ message: "Post not found." });
   try { if (reaction.was_new) await notifyReactionAuthor({ req, postId }); }
   catch (error) { console.error("Failed to create post reaction notification:", error); }
+  // Return to REACTION TRACE STEP 7A in client ForumThread.jsx.
   res.send({ reaction_type: reaction.reaction_type });
 });
 
 router.delete("/posts/:id/reaction", async (req, res) => {
+  // REACTION TRACE STEP 4C: Clicking the active post reaction sends DELETE
+  // here instead of PUT. The query removes that member's one reaction row.
   await removeForumPostReaction(Number(req.params.id), req.user.user_id);
+  // Return to REACTION TRACE STEP 7A in client ForumThread.jsx.
   res.send({ reaction_type: null });
 });
 
 router.put("/posts/:id/comments/:commentId/reaction", async (req, res) => {
+  // REACTION TRACE STEP 4B: PUT requests from toggleCommentReaction() arrive
+  // here. The post ID keeps the route inside its thread; commentId identifies
+  // the exact reply that will receive the reaction.
   const commentId = Number(req.params.commentId);
   const reactionType = req.body.reaction_type;
   if (!Number.isInteger(commentId) || !REACTION_TYPES.has(reactionType)) {
     return res.status(400).send({ message: "Choose a valid reaction." });
   }
 
+  // Continue at REACTION TRACE STEP 5B in db/queries/forum.js.
   const reaction = await setForumCommentReaction(commentId, req.user.user_id, reactionType);
   if (!reaction) return res.status(404).send({ message: "Reply not found." });
   try { if (reaction.was_new) await notifyReactionAuthor({ req, postId: Number(req.params.id), commentId }); }
   catch (error) { console.error("Failed to create reply reaction notification:", error); }
+  // Return to REACTION TRACE STEP 7B in client ForumThread.jsx.
   res.send({ reaction_type: reaction.reaction_type });
 });
 
 router.delete("/posts/:id/comments/:commentId/reaction", async (req, res) => {
+  // REACTION TRACE STEP 4D: Clicking the active reply reaction sends DELETE
+  // here, which removes the matching row through the DB query file.
   await removeForumCommentReaction(Number(req.params.commentId), req.user.user_id);
+  // Return to REACTION TRACE STEP 7B in client ForumThread.jsx.
   res.send({ reaction_type: null });
 });
 

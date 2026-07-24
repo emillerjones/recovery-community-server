@@ -7,6 +7,7 @@ import {
   updateUserRole,
   setUserActive,
   softDeleteUser,
+  searchActiveUsersForMention,
 } from "#db/queries/users";
 import requireBody from "#middleware/requireBody";
 import { createToken } from "#utils/jwt";
@@ -104,6 +105,14 @@ router.get("/me", async (req, res) => {
   } catch (err) {
     res.status(500).send("Server profile synchronization failure");
   }
+});
+
+router.get("/mention-search", async (req, res) => {
+  // MENTION TRACE STEP 3: Typing after @ in MentionTextarea calls this route.
+  // requireUser above keeps the membership directory private. The query only
+  // returns active usernames, IDs, and avatars—never private account fields.
+  const search = String(req.query.q || "").trim().slice(0, 30);
+  res.send(await searchActiveUsersForMention(search, req.user.user_id));
 });
 
 /**
