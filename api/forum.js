@@ -6,6 +6,7 @@ import {
   getForumCategories,
   getForumComments,
   getForumNotificationRecipient,
+  getForumReactionTarget,
   getForumPostById,
   getForumPosts,
   getFlaggedForumComments,
@@ -15,18 +16,32 @@ import {
   reviewForumCommentFlags,
   reviewForumPostFlags,
   saveForumPost,
+  setForumCommentReaction,
+  setForumPostReaction,
   softDeleteForumComment,
   softDeleteForumPost,
   unflagForumComment,
   unflagForumPost,
+  removeForumCommentReaction,
+  removeForumPostReaction,
   unsaveForumPost,
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
-import { createNotification } from "#db/queries/notifications";
+import { createNotification, createOrGroupReactionNotification } from "#db/queries/notifications";
 import { notifyThread, notifyUser } from "#utils/socket";
 
 const router = express.Router();
+const REACTION_TYPES = new Set([
+  "support",
+  "agree",
+  "relate",
+  "encouragement",
+  "helpful",
+  "celebrate",
+  "inspiring",
+  "care",
+]);
 
 router.use(requireUser);
 
@@ -196,6 +211,57 @@ router.post("/posts/:id/save", async (req, res) => {
 router.delete("/posts/:id/save", async (req, res) => {
   await unsaveForumPost(Number(req.params.id), req.user.user_id);
   res.send({ saved: false });
+});
+
+async function notifyReactionAuthor({ req, postId, commentId = null }) {
+  const target = await getForumReactionTarget({ postId, commentId });
+  if (!target || target.author_id === req.user.user_id) return;
+
+  const notification = await createOrGroupReactionNotification({
+    userId: target.author_id,
+    actorId: req.user.user_id,
+    postId: target.post_id,
+    commentId: target.comment_id,
+  });
+  notifyUser(target.author_id, "notification", notification);
+}
+
+router.put("/posts/:id/reaction", async (req, res) => {
+  const postId = Number(req.params.id);
+  const reactionType = req.body.reaction_type;
+  if (!Number.isInteger(postId) || !REACTION_TYPES.has(reactionType)) {
+    return res.status(400).send({ message: "Choose a valid reaction." });
+  }
+
+  const reaction = await setForumPostReaction(postId, req.user.user_id, reactionType);
+  if (!reaction) return res.status(404).send({ message: "Post not found." });
+  try { if (reaction.was_new) await notifyReactionAuthor({ req, postId }); }
+  catch (error) { console.error("Failed to create post reaction notification:", error); }
+  res.send({ reaction_type: reaction.reaction_type });
+});
+
+router.delete("/posts/:id/reaction", async (req, res) => {
+  await removeForumPostReaction(Number(req.params.id), req.user.user_id);
+  res.send({ reaction_type: null });
+});
+
+router.put("/posts/:id/comments/:commentId/reaction", async (req, res) => {
+  const commentId = Number(req.params.commentId);
+  const reactionType = req.body.reaction_type;
+  if (!Number.isInteger(commentId) || !REACTION_TYPES.has(reactionType)) {
+    return res.status(400).send({ message: "Choose a valid reaction." });
+  }
+
+  const reaction = await setForumCommentReaction(commentId, req.user.user_id, reactionType);
+  if (!reaction) return res.status(404).send({ message: "Reply not found." });
+  try { if (reaction.was_new) await notifyReactionAuthor({ req, postId: Number(req.params.id), commentId }); }
+  catch (error) { console.error("Failed to create reply reaction notification:", error); }
+  res.send({ reaction_type: reaction.reaction_type });
+});
+
+router.delete("/posts/:id/comments/:commentId/reaction", async (req, res) => {
+  await removeForumCommentReaction(Number(req.params.commentId), req.user.user_id);
+  res.send({ reaction_type: null });
 });
 
 router.post("/posts/:id/comments/:commentId/flag", async (req, res) => {

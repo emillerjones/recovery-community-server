@@ -95,7 +95,20 @@ export async function getForumPostById(postId, viewerId) {
         EXISTS(
           SELECT 1 FROM forum_saved_posts sp
           WHERE sp.post_id = p.post_id AND sp.user_id = $2
-        ) AS saved_by_me
+        ) AS saved_by_me,
+        COALESCE((
+          SELECT jsonb_object_agg(t.reaction_type, t.reaction_count)
+          FROM (
+            SELECT reaction_type, COUNT(*)::INT AS reaction_count
+            FROM forum_reactions
+            WHERE post_id = p.post_id
+            GROUP BY reaction_type
+          ) t
+        ), '{}'::jsonb) AS reactions,
+        (
+          SELECT reaction_type FROM forum_reactions
+          WHERE post_id = p.post_id AND user_id = $2
+        ) AS my_reaction
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
@@ -127,7 +140,20 @@ export async function getForumComments(postId, viewerId) {
           WHERE flags.comment_id = cm.comment_id
             AND flags.flagged_by = $2
             AND flags.reviewed_at IS NULL
-        ) AS flagged_by_me
+        ) AS flagged_by_me,
+        COALESCE((
+          SELECT jsonb_object_agg(t.reaction_type, t.reaction_count)
+          FROM (
+            SELECT reaction_type, COUNT(*)::INT AS reaction_count
+            FROM forum_reactions
+            WHERE comment_id = cm.comment_id
+            GROUP BY reaction_type
+          ) t
+        ), '{}'::jsonb) AS reactions,
+        (
+          SELECT reaction_type FROM forum_reactions
+          WHERE comment_id = cm.comment_id AND user_id = $2
+        ) AS my_reaction
       FROM comments cm
       JOIN users u ON u.user_id = cm.author_id
       WHERE cm.post_id = $1
@@ -173,7 +199,9 @@ export async function createForumComment({ postId, authorId, parentCommentId, bo
         inserted.*,
         u.username AS author_username,
         u.avatar_url AS author_avatar_url,
-        FALSE AS flagged_by_me
+        FALSE AS flagged_by_me,
+        '{}'::jsonb AS reactions,
+        NULL::TEXT AS my_reaction
       FROM inserted
       JOIN users u ON u.user_id = inserted.author_id
     `,
@@ -444,4 +472,69 @@ export async function unsaveForumPost(postId, userId) {
     `DELETE FROM forum_saved_posts WHERE user_id = $1 AND post_id = $2`,
     [userId, postId]
   );
+}
+
+export async function setForumPostReaction(postId, userId, reactionType) {
+  const { rows: [reaction] } = await db.query(
+    `
+      WITH prior AS (
+        SELECT reaction_id FROM forum_reactions WHERE post_id = $1 AND user_id = $2
+      )
+      INSERT INTO forum_reactions (user_id, post_id, reaction_type)
+      SELECT $2, p.post_id, $3
+      FROM posts p
+      WHERE p.post_id = $1 AND p.active = TRUE AND p.deleted_at IS NULL
+      ON CONFLICT (post_id, user_id) WHERE post_id IS NOT NULL
+      DO UPDATE SET reaction_type = EXCLUDED.reaction_type, updated_at = NOW()
+      RETURNING *, NOT EXISTS (SELECT 1 FROM prior) AS was_new
+    `,
+    [postId, userId, reactionType]
+  );
+  return reaction || null;
+}
+
+export async function removeForumPostReaction(postId, userId) {
+  await db.query(`DELETE FROM forum_reactions WHERE post_id = $1 AND user_id = $2`, [postId, userId]);
+}
+
+export async function setForumCommentReaction(commentId, userId, reactionType) {
+  const { rows: [reaction] } = await db.query(
+    `
+      WITH prior AS (
+        SELECT reaction_id FROM forum_reactions WHERE comment_id = $1 AND user_id = $2
+      )
+      INSERT INTO forum_reactions (user_id, comment_id, reaction_type)
+      SELECT $2, cm.comment_id, $3
+      FROM comments cm
+      JOIN posts p ON p.post_id = cm.post_id
+      WHERE cm.comment_id = $1
+        AND cm.deleted_at IS NULL
+        AND p.active = TRUE
+        AND p.deleted_at IS NULL
+      ON CONFLICT (comment_id, user_id) WHERE comment_id IS NOT NULL
+      DO UPDATE SET reaction_type = EXCLUDED.reaction_type, updated_at = NOW()
+      RETURNING *, NOT EXISTS (SELECT 1 FROM prior) AS was_new
+    `,
+    [commentId, userId, reactionType]
+  );
+  return reaction || null;
+}
+
+export async function removeForumCommentReaction(commentId, userId) {
+  await db.query(`DELETE FROM forum_reactions WHERE comment_id = $1 AND user_id = $2`, [commentId, userId]);
+}
+
+export async function getForumReactionTarget({ postId, commentId }) {
+  if (commentId) {
+    const { rows: [target] } = await db.query(
+      `SELECT cm.author_id, cm.post_id, cm.comment_id FROM comments cm WHERE cm.comment_id = $1 AND cm.deleted_at IS NULL`,
+      [commentId]
+    );
+    return target || null;
+  }
+  const { rows: [target] } = await db.query(
+    `SELECT author_id, post_id, NULL::INT AS comment_id FROM posts WHERE post_id = $1 AND deleted_at IS NULL`,
+    [postId]
+  );
+  return target || null;
 }
