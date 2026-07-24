@@ -11,6 +11,12 @@ CREATE TABLE IF NOT EXISTS users (
   password TEXT NOT NULL,
   username TEXT UNIQUE, 
 
+  -- Existing members are approved by default. The public registration query
+  -- explicitly creates new accounts as unverified until they use their email link.
+  account_status TEXT NOT NULL DEFAULT 'approved'
+    CHECK (account_status IN ('unverified', 'pending', 'approved', 'rejected')),
+  email_verified_at TIMESTAMP,
+
   phone_number TEXT, 
   avatar_url TEXT,
   date_of_birth DATE,
@@ -320,5 +326,85 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_forum_mentions_one_per_comment
 
 CREATE INDEX IF NOT EXISTS idx_forum_mentions_recipient
   ON forum_mentions(mentioned_user_id, created_at DESC);
+
+
+-- ************************ MEMBERSHIP REGISTRATION ************************ --
+
+-- One application accompanies every public registration. Keeping these answers
+-- outside users makes the member record small and leaves a clear review history.
+CREATE TABLE IF NOT EXISTS membership_applications (
+  application_id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
+  reason_for_joining TEXT NOT NULL,
+  how_did_you_find_us TEXT NOT NULL,
+  admission_method TEXT NOT NULL
+    CHECK (admission_method IN ('standard', 'personal_invite', 'shared_code')),
+  personal_invite_id INT,
+  shared_code_id INT,
+  agreed_to_rules_at TIMESTAMP NOT NULL,
+  agreed_to_privacy_at TIMESTAMP NOT NULL,
+  reviewed_by INT REFERENCES users(user_id),
+  reviewed_at TIMESTAMP,
+  rejection_reason TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS personal_invites (
+  invite_id SERIAL PRIMARY KEY,
+  email TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_by INT NOT NULL REFERENCES users(user_id),
+  expires_at TIMESTAMP NOT NULL,
+  used_at TIMESTAMP,
+  used_by INT REFERENCES users(user_id),
+  revoked_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS shared_invite_codes (
+  code_id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code_hash TEXT NOT NULL UNIQUE,
+  created_by INT NOT NULL REFERENCES users(user_id),
+  expires_at TIMESTAMP NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  max_uses INT CHECK (max_uses IS NULL OR max_uses > 0),
+  use_count INT NOT NULL DEFAULT 0 CHECK (use_count >= 0),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  verification_id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMP NOT NULL,
+  used_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE membership_applications
+  DROP CONSTRAINT IF EXISTS membership_applications_personal_invite_id_fkey,
+  ADD CONSTRAINT membership_applications_personal_invite_id_fkey
+    FOREIGN KEY (personal_invite_id) REFERENCES personal_invites(invite_id),
+  DROP CONSTRAINT IF EXISTS membership_applications_shared_code_id_fkey,
+  ADD CONSTRAINT membership_applications_shared_code_id_fkey
+    FOREIGN KEY (shared_code_id) REFERENCES shared_invite_codes(code_id),
+  DROP CONSTRAINT IF EXISTS membership_applications_admission_source_check,
+  ADD CONSTRAINT membership_applications_admission_source_check CHECK (
+    (admission_method = 'standard' AND personal_invite_id IS NULL AND shared_code_id IS NULL)
+    OR (admission_method = 'personal_invite' AND personal_invite_id IS NOT NULL AND shared_code_id IS NULL)
+    OR (admission_method = 'shared_code' AND shared_code_id IS NOT NULL AND personal_invite_id IS NULL)
+  );
+
+CREATE INDEX IF NOT EXISTS idx_membership_applications_review_queue
+  ON membership_applications(reviewed_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_email_verification_user_active
+  ON email_verification_tokens(user_id, used_at, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_personal_invites_created
+  ON personal_invites(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shared_invite_codes_active
+  ON shared_invite_codes(active, expires_at);
 
 

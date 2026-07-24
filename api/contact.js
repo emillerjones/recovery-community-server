@@ -1,6 +1,6 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
-import nodemailer from "nodemailer";
+import { sendEmail } from "#utils/email";
 
 const router = express.Router();
 
@@ -27,21 +27,6 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function cleanSingleLine(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
-}
-
-function mailTransport() {
-  const { MAIL_USER, MAIL_APP_PASSWORD } = process.env;
-  if (!MAIL_USER || !MAIL_APP_PASSWORD) {
-    throw new Error("Contact email is not configured.");
-  }
-
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: MAIL_USER,
-      pass: MAIL_APP_PASSWORD,
-    },
-  });
 }
 
 router.post("/", contactLimiter, async (req, res) => {
@@ -79,13 +64,12 @@ router.post("/", contactLimiter, async (req, res) => {
     return res.status(400).send({ message: "Please enter a message under 4,000 characters." });
   }
 
-  const { MAIL_USER, CONTACT_TO } = process.env;
+  const { CONTACT_TO } = process.env;
   if (!CONTACT_TO) {
     throw new Error("Contact recipient is not configured.");
   }
 
-  await mailTransport().sendMail({
-    from: `"Recovery With The Exit Drug Website" <${MAIL_USER}>`,
+  await sendEmail({
     to: CONTACT_TO,
     replyTo: cleanEmail,
     subject: `[Website Contact] ${cleanReason} — ${cleanName}`,

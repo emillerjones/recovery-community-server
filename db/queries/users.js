@@ -43,6 +43,9 @@ export async function getUserByUsername(username) {
     SELECT *
     FROM users
     WHERE username = $1
+      AND account_status = 'approved'
+      AND active = TRUE
+      AND deleted_at IS NULL
   `;
   const { rows: [user]} = await db.query(sql, [username]);
   return user;
@@ -56,6 +59,7 @@ export async function searchActiveUsersForMention(search, excludeUserId, limit =
       SELECT user_id, username, avatar_url
       FROM users
       WHERE active = TRUE
+        AND account_status = 'approved'
         AND deleted_at IS NULL
         AND user_id <> $2
         AND username ILIKE $1
@@ -77,6 +81,7 @@ export async function getActiveMentionUsers(userIds) {
       FROM users
       WHERE user_id = ANY($1::INT[])
         AND active = TRUE
+        AND account_status = 'approved'
         AND deleted_at IS NULL
     `,
     [userIds]

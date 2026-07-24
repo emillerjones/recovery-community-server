@@ -1,6 +1,5 @@
 import express from "express";
 import {
-  createUser,
   getUsers,
   getUserById,
   getUserByEmailAndPassword,
@@ -18,44 +17,22 @@ const router = express.Router();
 
 
 // 1. GET All Users 
-router.get("/", async (req, res) => {
+router.get("/", requireUser, async (req, res) => {
+  // This endpoint includes private account fields for the management screen.
+  // Keep it away from public/member-directory traffic and pending applicants.
+  if (req.user.role_id > 10) {
+    return res.status(403).send({ message: "Owner or administrator access is required." });
+  }
   const users = await getUsers();
   users.forEach(user => delete user.password);
-  let result = users;
-  
-  if (!req.user) {
-    result = users.filter(user => user.role_id === 100);
-  }
-  res.send(result);
+  res.send(users);
 });
 
 
 // 3. POST Register account registration handler
-router.post("/register", requireBody(["email", "username", "password"]), async (req, res) => {
-  try {
-    const { email, username, password } = req.body;
-    const user = await createUser(
-      email.toLowerCase().trim(),
-      username.toLowerCase().trim(),
-      password
-    );
-    delete user.password;
-    
-    //FIXED PAYLOAD: Generates full user identity hooks directly inside the token signature
-    const token = createToken({ 
-      id: user.user_id,
-      username: user.username,
-      role_id: user.role_id
-    });
-    
-    res.status(201).send({ token, user });
-  } catch (err) {
-    if (err.code === "23505") {
-      return res.status(400).send("Email or username already exists");
-    }
-    res.status(500).send("Server error");
-  }
-});
+router.post("/register", (req, res) => res.status(410).send({
+  message: "Registration has moved to the verified membership application.",
+}));
 
 // 4. POST Login credential verification gateway
 router.post("/login", requireBody(["email", "password"]), async (req, res) => {
@@ -67,6 +44,18 @@ router.post("/login", requireBody(["email", "password"]), async (req, res) => {
     );
     if (!user) {
       return res.status(401).send("Invalid email or password.");
+    }
+    if (user.account_status === "unverified") {
+      return res.status(403).send("Please verify your email before logging in.");
+    }
+    if (user.account_status === "pending") {
+      return res.status(403).send("Your membership application is awaiting approval.");
+    }
+    if (user.account_status === "rejected") {
+      return res.status(403).send("This membership application was not approved.");
+    }
+    if (!user.active) {
+      return res.status(403).send("This account is currently inactive.");
     }
     
     // ✅ FIXED PAYLOAD: Encodes profile details into the token so user.username populates on boot
