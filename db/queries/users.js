@@ -164,3 +164,87 @@ export async function softDeleteUser(userId) {
   } = await db.query(sql, [userId]);
   return user;
 }
+
+/**
+ * Permanently removes an unused member account created while testing signup.
+ * This is deliberately one PostgreSQL statement: every cleanup succeeds
+ * together, or PostgreSQL leaves the account untouched.
+ *
+ * Established members are ineligible. We refuse anyone with authored forum
+ * content, any direct-message conversation activity, staff authority, or
+ * admission tools they created. Their community history belongs to others too.
+ */
+export async function hardDeleteTestUser(userId) {
+  const { rows: [deletedUser] } = await db.query(
+    `WITH eligible_user AS (
+       SELECT u.user_id, u.email, u.username
+       FROM users u
+       WHERE u.user_id = $1
+         AND u.role_id = 100
+         AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.author_id = u.user_id)
+         AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.author_id = u.user_id)
+         AND NOT EXISTS (
+           SELECT 1 FROM direct_conversations dc
+           JOIN direct_messages dm ON dm.conversation_id = dc.conversation_id
+           WHERE dc.user_one_id = u.user_id OR dc.user_two_id = u.user_id
+         )
+         AND NOT EXISTS (SELECT 1 FROM personal_invites pi WHERE pi.created_by = u.user_id)
+         AND NOT EXISTS (SELECT 1 FROM shared_invite_codes sc WHERE sc.created_by = u.user_id)
+     ), cleared_flag_reviews AS (
+       UPDATE forum_content_flags SET reviewed_by = NULL
+       WHERE reviewed_by = (SELECT user_id FROM eligible_user)
+     ), deleted_flags AS (
+       DELETE FROM forum_content_flags
+       WHERE flagged_by = (SELECT user_id FROM eligible_user)
+     ), deleted_notifications AS (
+       DELETE FROM notifications
+       WHERE user_id = (SELECT user_id FROM eligible_user)
+          OR actor_id = (SELECT user_id FROM eligible_user)
+     ), deleted_mentions AS (
+       DELETE FROM forum_mentions
+       WHERE mentioned_user_id = (SELECT user_id FROM eligible_user)
+          OR mentioned_by = (SELECT user_id FROM eligible_user)
+     ), deleted_reactions AS (
+       DELETE FROM forum_reactions
+       WHERE user_id = (SELECT user_id FROM eligible_user)
+     ), deleted_saves AS (
+       DELETE FROM forum_saved_posts
+       WHERE user_id = (SELECT user_id FROM eligible_user)
+     ), deleted_empty_conversations AS (
+       DELETE FROM direct_conversations
+       WHERE (user_one_id = (SELECT user_id FROM eligible_user)
+          OR user_two_id = (SELECT user_id FROM eligible_user))
+         AND NOT EXISTS (
+           SELECT 1 FROM direct_messages dm
+           WHERE dm.conversation_id = direct_conversations.conversation_id
+         )
+     ), cleared_application_reviews AS (
+       UPDATE membership_applications SET reviewed_by = NULL
+       WHERE reviewed_by = (SELECT user_id FROM eligible_user)
+     ), deleted_tokens AS (
+       DELETE FROM email_verification_tokens
+       WHERE user_id = (SELECT user_id FROM eligible_user)
+     ), deleted_application AS (
+       DELETE FROM membership_applications
+       WHERE user_id = (SELECT user_id FROM eligible_user)
+       RETURNING personal_invite_id, shared_code_id
+     ), restored_shared_code AS (
+       UPDATE shared_invite_codes sc
+       SET use_count = GREATEST(0, use_count - 1), updated_at = NOW()
+       FROM deleted_application da
+       WHERE sc.code_id = da.shared_code_id
+     ), deleted_personal_invite AS (
+       DELETE FROM personal_invites pi
+       USING deleted_application da
+       WHERE pi.invite_id = da.personal_invite_id
+     ), deleted_user AS (
+       DELETE FROM users u
+       USING eligible_user eligible
+       WHERE u.user_id = eligible.user_id
+       RETURNING u.user_id, u.email, u.username
+     )
+     SELECT * FROM deleted_user`,
+    [userId]
+  );
+  return deletedUser;
+}

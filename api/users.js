@@ -6,6 +6,7 @@ import {
   updateUserRole,
   setUserActive,
   softDeleteUser,
+  hardDeleteTestUser,
   searchActiveUsersForMention,
 } from "#db/queries/users";
 import requireBody from "#middleware/requireBody";
@@ -193,6 +194,30 @@ router.patch("/:id/active", requireBody(["active"]), async (req, res) => {
   const updatedUser = await setUserActive(targetUserId, active);
   delete updatedUser.password;
   res.send(updatedUser);
+});
+
+// TESTING ONLY: permanently remove an unused signup so the same email can run
+// through standard, personal-invite, and shared-code registration repeatedly.
+router.delete("/:id/hard", async (req, res) => {
+  if (process.env.ENABLE_TEST_HARD_DELETE !== "true") {
+    return res.status(404).send({ message: "Not found." });
+  }
+  if (req.user.role_id > 10) {
+    return res.status(403).send({ message: "Owner or administrator access is required." });
+  }
+
+  const targetUserId = Number(req.params.id);
+  if (!Number.isInteger(targetUserId) || targetUserId === req.user.user_id) {
+    return res.status(400).send({ message: "That account cannot be permanently deleted here." });
+  }
+
+  const deletedUser = await hardDeleteTestUser(targetUserId);
+  if (!deletedUser) {
+    return res.status(409).send({
+      message: "Hard delete is limited to non-staff test accounts with no posts, comments, or message activity.",
+    });
+  }
+  res.send(deletedUser);
 });
 
 // 8. DELETE soft-delete a user

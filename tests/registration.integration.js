@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import db from "#db/client";
-import { createUser } from "#db/queries/users";
+import { createUser, hardDeleteTestUser } from "#db/queries/users";
 import { createRegistration, verifyEmail } from "#db/queries/registration";
 import {
   createPersonalInvite, createSharedCode, reviewApplication,
@@ -41,6 +41,7 @@ try {
     "SELECT application_id FROM membership_applications WHERE user_id = $1", [standard.user_id]
   );
   assert.equal((await reviewApplication(pendingApplication.application_id, owner.user_id, "approved", "")).account_status, "approved");
+  assert.equal((await hardDeleteTestUser(standard.user_id)).email, standard.email);
 
   // Flow 2: a private, one-use invitation bypasses manual review after verification.
   const inviteSecret = createSecureToken();
@@ -58,6 +59,9 @@ try {
     "SELECT COUNT(*)::INT AS count FROM email_verification_tokens WHERE user_id = $1", [invited.user_id]
   );
   assert.equal(invitedTokenCount.count, 0);
+  assert.equal((await hardDeleteTestUser(invited.user_id)).email, invited.email);
+  const { rows: [remainingInvite] } = await db.query("SELECT COUNT(*)::INT AS count FROM personal_invites");
+  assert.equal(remainingInvite.count, 0);
 
   // Flow 3: an active shared code behaves like the invite, and counts its use.
   const readableCode = "FACEBOOK-TEST";
@@ -73,8 +77,11 @@ try {
   assert.equal((await verifyEmail(codeVerification.tokenHash)).account_status, "approved");
   const { rows: [code] } = await db.query("SELECT use_count FROM shared_invite_codes");
   assert.equal(code.use_count, 1);
+  assert.equal((await hardDeleteTestUser((await db.query("SELECT user_id FROM users WHERE email = 'coded@example.com'")).rows[0].user_id)).email, "coded@example.com");
+  const { rows: [restoredCode] } = await db.query("SELECT use_count FROM shared_invite_codes");
+  assert.equal(restoredCode.use_count, 0);
 
-  console.log("Registration integration test passed: standard, personal invite, and shared code.");
+  console.log("Registration integration test passed: all three flows and test-account hard deletion.");
 } finally {
   await db.query("ROLLBACK");
   await db.end();
