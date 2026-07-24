@@ -5,7 +5,7 @@ import {
   getSharedCodes, reviewApplication, revokePersonalInvite, setSharedCodeActive,
 } from "#db/queries/admissions";
 import { clientUrl, sendEmail } from "#utils/email";
-import { createReadableCode, createSecureToken, hashSecret } from "#utils/secureTokens";
+import { createSecureToken, hashSecret } from "#utils/secureTokens";
 
 const router = express.Router();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -77,17 +77,18 @@ router.patch("/invites/:id/revoke", async (req, res) => {
 router.get("/codes", async (req, res) => res.send(await getSharedCodes()));
 
 router.post("/codes", async (req, res) => {
-  const name = String(req.body?.name || "").trim().slice(0, 100);
-  const requestedCode = String(req.body?.code || "").trim().toUpperCase();
-  const code = requestedCode || createReadableCode();
+  const code = String(req.body?.code || "").trim().toUpperCase();
   const expiresInDays = Math.min(Math.max(Number(req.body?.expiresInDays) || 90, 1), 365);
   const maxUsesValue = Number(req.body?.maxUses);
   const maxUses = Number.isInteger(maxUsesValue) && maxUsesValue > 0 ? maxUsesValue : null;
-  if (!name || code.length < 6 || code.length > 64) {
-    return res.status(400).send({ message: "Give the code a name and use at least 6 characters." });
+  if (code.length < 6 || code.length > 64) {
+    return res.status(400).send({ message: "Enter a code between 6 and 64 characters." });
   }
   const saved = await createSharedCode({
-    name, codeHash: hashSecret(code), createdBy: req.user.user_id,
+    // Shared codes are intentionally distributed to the Facebook community,
+    // so the actual code is also the owner-facing list label. Its HMAC remains
+    // the value used when validating registration submissions.
+    name: code, codeHash: hashSecret(code), createdBy: req.user.user_id,
     expiresAt: new Date(Date.now() + expiresInDays * 86400000), maxUses,
   });
   // This is intentionally the only response that reveals the usable code.
