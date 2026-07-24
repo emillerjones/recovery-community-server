@@ -3,8 +3,12 @@ import bcrypt from "bcrypt";
 
 const USER_AND_APPLICATION = `
   inserted_user AS (
-    INSERT INTO users (email, username, password, role_id, account_status)
-    SELECT $1, $2, $3, 100, 'unverified'
+    INSERT INTO users (
+      email, username, password, role_id, account_status, email_verified_at
+    )
+    SELECT $1, $2, $3, 100,
+      CASE WHEN $6 = 'personal_invite' THEN 'approved' ELSE 'unverified' END,
+      CASE WHEN $6 = 'personal_invite' THEN NOW() ELSE NULL END
     FROM admission_source
     RETURNING user_id, email, username, account_status
   ),
@@ -19,14 +23,22 @@ const USER_AND_APPLICATION = `
   inserted_token AS (
     INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
     SELECT user_id, $7, NOW() + INTERVAL '24 hours' FROM inserted_user
+    WHERE $6 <> 'personal_invite'
+  ),
+  marked_personal_invite AS (
+    UPDATE personal_invites pi
+    SET used_by = inserted_user.user_id
+    FROM inserted_user, admission_source
+    WHERE pi.invite_id = admission_source.source_invite_id
   )
   SELECT * FROM inserted_user
 `;
 
 /**
  * REGISTRATION TRACE: the public route validates the form, then lands here.
- * Each branch is ONE PostgreSQL statement: claiming an invite/code, inserting
- * the user, application, and verification token all succeed or all roll back.
+ * Each branch is ONE PostgreSQL statement: claiming an invite/code and creating
+ * the user/application all succeed or all roll back. A personal emailed invite
+ * already proves email access, so only the other two paths create another token.
  */
 export async function createRegistration({
   email, username, password, reasonForJoining, howFound, admissionMethod,

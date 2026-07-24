@@ -49,11 +49,15 @@ try {
     createdBy: owner.user_id, expiresAt: new Date(Date.now() + 86400000),
   });
   const invitedVerification = createSecureToken();
-  await createRegistration(application({
+  const invited = await createRegistration(application({
     email: "invited@example.com", username: "invited", admissionMethod: "personal_invite",
     tokenHash: invitedVerification.tokenHash, sourceHash: inviteSecret.tokenHash,
   }));
-  assert.equal((await verifyEmail(invitedVerification.tokenHash)).account_status, "approved");
+  assert.equal(invited.account_status, "approved");
+  const { rows: [invitedTokenCount] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM email_verification_tokens WHERE user_id = $1", [invited.user_id]
+  );
+  assert.equal(invitedTokenCount.count, 0);
 
   // Flow 3: an active shared code behaves like the invite, and counts its use.
   const readableCode = "FACEBOOK-TEST";

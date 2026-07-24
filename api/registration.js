@@ -85,16 +85,22 @@ router.post("/register", registrationLimiter, async (req, res) => {
     });
     if (!user) return res.status(400).send({ message: "That invitation or shared code is invalid, expired, or already used." });
 
-    try {
-      // REGISTRATION TRACE STEP 3: only the emailed token can move this account
-      // out of unverified; we never log the person in from this POST.
-      await sendVerificationEmail(user, token);
-    } catch (emailError) {
-      console.error("Verification email failed; user can use resend:", emailError);
+    if (admissionMethod !== "personal_invite") {
+      try {
+        // REGISTRATION TRACE STEP 3: standard and shared-code signups still
+        // prove ownership through a fresh email. Possessing the one-use personal
+        // invite already proved access, so that path is active immediately.
+        await sendVerificationEmail(user, token);
+      } catch (emailError) {
+        console.error("Verification email failed; user can use resend:", emailError);
+      }
     }
 
     res.status(201).send({
-      message: "Check your email to verify your address and finish registration.",
+      status: user.account_status,
+      message: admissionMethod === "personal_invite"
+        ? "Your invited account is verified and ready. You can log in now."
+        : "Check your email to verify your address and finish registration.",
       email,
     });
   } catch (error) {
