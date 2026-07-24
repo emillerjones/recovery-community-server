@@ -199,11 +199,10 @@ router.patch("/:id/active", requireBody(["active"]), async (req, res) => {
 // TESTING ONLY: permanently remove an unused signup so the same email can run
 // through standard, personal-invite, and shared-code registration repeatedly.
 router.delete("/:id/hard", async (req, res) => {
-  if (process.env.ENABLE_TEST_HARD_DELETE !== "true") {
-    return res.status(404).send({ message: "Not found." });
-  }
-  if (req.user.role_id > 10) {
-    return res.status(403).send({ message: "Owner or administrator access is required." });
+  // This temporary testing tool is owner-only in both the UI and API. The
+  // server check is the real protection; hiding a button alone is never enough.
+  if (req.user.role_id !== 1) {
+    return res.status(403).send({ message: "Owner access is required." });
   }
 
   const targetUserId = Number(req.params.id);
