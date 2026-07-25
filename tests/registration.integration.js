@@ -6,6 +6,7 @@ import { createRegistration, verifyEmail } from "#db/queries/registration";
 import {
   createPersonalInvite, createSharedCode, reviewApplication,
 } from "#db/queries/admissions";
+import { updateForumPost, updateForumPostModeration } from "#db/queries/forum";
 import { createSecureToken, hashSecret } from "#utils/secureTokens";
 
 const schemaName = "codex_registration_integration";
@@ -38,6 +39,31 @@ try {
   assert.equal(completedProfile.bio, "Community founder");
   assert.equal(new Date(completedProfile.date_of_birth).toISOString().slice(0, 10), "1980-01-02");
   assert.equal(completedProfile.avatar_url, "preset:Butterfly:lavender");
+
+  // Editing content stores the previous wording privately and sets the public
+  // edited timestamp. Pin/lock moderation must not create a revision.
+  const { rows: [category] } = await db.query(
+    "INSERT INTO forum_categories (name, slug) VALUES ('Test', 'test') RETURNING category_id"
+  );
+  const { rows: [originalPost] } = await db.query(
+    "INSERT INTO posts (category_id, author_id, title, body) VALUES ($1, $2, 'Original title', 'Original body') RETURNING *",
+    [category.category_id, owner.user_id]
+  );
+  const editedPost = await updateForumPost(originalPost.post_id, owner.user_id, {
+    title: "Edited title", body: "Edited body",
+  });
+  assert.ok(editedPost.content_edited_at);
+  const { rows: [revision] } = await db.query(
+    "SELECT * FROM forum_post_revisions WHERE post_id = $1", [originalPost.post_id]
+  );
+  assert.equal(revision.previous_title, "Original title");
+  assert.equal(revision.previous_body, "Original body");
+  assert.equal(revision.edited_by, owner.user_id);
+  await updateForumPostModeration(originalPost.post_id, { pinned: true });
+  const { rows: [{ count: revisionCount }] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM forum_post_revisions WHERE post_id = $1", [originalPost.post_id]
+  );
+  assert.equal(revisionCount, 1);
 
   // Flow 1: standard applicant verifies, becomes pending, then is approved.
   const standardSecret = createSecureToken();

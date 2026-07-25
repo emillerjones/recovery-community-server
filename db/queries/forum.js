@@ -273,30 +273,60 @@ export async function updateForumPostModeration(postId, { pinned, locked }) {
 
 export async function updateForumPost(postId, authorId, { title, body }) {
   const fields = [];
+  const changeChecks = [];
   const values = [];
 
   if (title) {
     values.push(title.trim());
     fields.push(`title = $${values.length}`);
+    changeChecks.push(`p.title IS DISTINCT FROM $${values.length}`);
   }
   if (body) {
     values.push(body.trim());
     fields.push(`body = $${values.length}`);
+    changeChecks.push(`p.body IS DISTINCT FROM $${values.length}`);
   }
   if (!fields.length) return null;
 
   values.push(postId, authorId);
+  const postIdParameter = values.length - 1;
+  const authorIdParameter = values.length;
   const {
     rows: [post],
   } = await db.query(
     `
-      UPDATE posts
-      SET ${fields.join(", ")}, updated_at = NOW()
-      WHERE post_id = $${values.length - 1}
-        AND author_id = $${values.length}
-        AND deleted_at IS NULL
-        AND locked = FALSE
-      RETURNING *
+      -- EDIT HISTORY TRACE STEP 4: lock and capture the current wording before
+      -- changing it. One SQL statement makes the snapshot + edit atomic.
+      WITH previous AS MATERIALIZED (
+        SELECT p.*
+        FROM posts p
+        WHERE p.post_id = $${postIdParameter}
+          AND p.author_id = $${authorIdParameter}
+          AND p.deleted_at IS NULL
+          AND p.locked = FALSE
+        FOR UPDATE
+      ),
+      updated AS (
+        UPDATE posts p
+        SET ${fields.join(", ")},
+            content_edited_at = NOW(),
+            updated_at = NOW()
+        FROM previous
+        WHERE p.post_id = previous.post_id
+          AND (${changeChecks.join(" OR ")})
+        RETURNING p.*
+      ),
+      revision AS (
+        INSERT INTO forum_post_revisions
+          (post_id, edited_by, previous_title, previous_body)
+        SELECT previous.post_id, $${authorIdParameter}, previous.title, previous.body
+        FROM previous
+        JOIN updated ON updated.post_id = previous.post_id
+        RETURNING revision_id
+      )
+      SELECT updated.*
+      FROM updated
+      CROSS JOIN revision
     `,
     values
   );

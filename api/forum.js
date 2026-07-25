@@ -270,6 +270,8 @@ router.patch("/posts/:id", async (req, res) => {
     return res.status(400).send({ message: "Nothing to update." });
   }
 
+  // EDIT HISTORY TRACE STEP 3: the query snapshots the current wording into
+  // the private revision table before applying this author's changes.
   const post = await updateForumPost(postId, req.user.user_id, { title, body });
   if (!post) return res.status(404).send({ message: "Post not found, locked, or not yours to edit." });
   res.send(post);
