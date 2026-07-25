@@ -54,7 +54,53 @@ export async function getForumPosts({ categorySlug, search, viewerId } = {}) {
         EXISTS(
           SELECT 1 FROM forum_saved_posts sp
           WHERE sp.post_id = p.post_id AND sp.user_id = $1
-        ) AS saved_by_me
+        ) AS saved_by_me,
+        COALESCE((
+          SELECT jsonb_object_agg(reaction_counts.reaction_type, reaction_counts.reaction_count)
+          FROM (
+            SELECT fr.reaction_type, COUNT(*)::INT AS reaction_count
+            FROM forum_reactions fr
+            WHERE fr.post_id = p.post_id
+            GROUP BY fr.reaction_type
+          ) reaction_counts
+        ), '{}'::jsonb) AS reactions,
+        (
+          SELECT fr.reaction_type
+          FROM forum_reactions fr
+          WHERE fr.post_id = p.post_id AND fr.user_id = $1
+        ) AS my_reaction,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'comment_id', preview.comment_id,
+            'body', preview.body,
+            'created_at', preview.created_at,
+            'author_username', preview.author_username,
+            'author_avatar_url', preview.author_avatar_url
+          ) ORDER BY preview.created_at)
+          FROM (
+            SELECT
+              recent.comment_id,
+              recent.body,
+              recent.created_at,
+              recent.author_username,
+              recent.author_avatar_url
+            FROM (
+              SELECT
+                cm_preview.comment_id,
+                cm_preview.body,
+                cm_preview.created_at,
+                preview_author.username AS author_username,
+                preview_author.avatar_url AS author_avatar_url
+              FROM comments cm_preview
+              JOIN users preview_author ON preview_author.user_id = cm_preview.author_id
+              WHERE cm_preview.post_id = p.post_id
+                AND cm_preview.active = TRUE
+                AND cm_preview.deleted_at IS NULL
+              ORDER BY cm_preview.created_at DESC
+              LIMIT 2
+            ) recent
+          ) preview
+        ), '[]'::jsonb) AS comment_preview
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
