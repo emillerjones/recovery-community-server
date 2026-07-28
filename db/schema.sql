@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS forum_reactions (
 
   reaction_type TEXT NOT NULL
     CHECK (reaction_type IN (
-      'support', 'agree', 'relate', 'encouragement',
+      'support', 'agree', 'relate',
       'helpful', 'celebrate', 'inspiring', 'care'
     )),
 

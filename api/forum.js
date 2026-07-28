@@ -48,7 +48,6 @@ const REACTION_TYPES = new Set([
   "support",
   "agree",
   "relate",
-  "encouragement",
   "helpful",
   "celebrate",
   "inspiring",

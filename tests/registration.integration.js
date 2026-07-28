@@ -73,6 +73,19 @@ try {
     "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_comments_post_active_created'"
   );
   assert.equal(feedIndex.indexname, "idx_comments_post_active_created");
+  const reactionMigration = (await fs.readFile(
+    new URL("../db/migrations/012_remove_encouragement_reaction.sql", import.meta.url),
+    "utf8"
+  )).replace(/^BEGIN;\s*/i, "").replace(/\s*COMMIT;\s*$/i, "");
+  await db.query(reactionMigration);
+  const { rows: [reactionConstraint] } = await db.query(`
+    SELECT pg_get_constraintdef(oid) AS definition
+    FROM pg_constraint
+    WHERE conrelid = 'forum_reactions'::regclass
+      AND conname = 'forum_reactions_reaction_type_check'
+  `);
+  assert.doesNotMatch(reactionConstraint.definition, /encouragement/);
+  assert.match(reactionConstraint.definition, /support/);
   await db.query(`INSERT INTO user_roles (role_id, role_name) VALUES
     (1, 'owner'), (10, 'administrator'), (50, 'moderator'), (100, 'member'), (1000, 'system')`);
   const owner = await createUser("owner@example.com", "owner", "owner-password", 1);
