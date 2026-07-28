@@ -35,6 +35,7 @@ import {
 } from "#db/queries/forum";
 import {
   createNotification,
+  createDirectReplyNotification,
   createForumParticipantNotifications,
   createOrGroupReactionNotification,
   createStaffFlagNotifications,
@@ -298,20 +299,34 @@ router.post("/posts/:id/comments", async (req, res) => {
   notifyThread(postId, "new_comment", comment);
 
   try {
-    // FACEBOOK-STYLE PARTICIPANT ALERT TRACE STEP 2: one query finds the OG
-    // poster, original-post reactors, and everyone who has commented anywhere
-    // in this conversation. It excludes the actor and deduplicates members.
-    const participantNotifications = await createForumParticipantNotifications({
-      actorId: req.user.user_id,
-      postId,
-      commentId: comment.comment_id,
-      activity: "comment",
-    });
+    // OWNER-APPROVED NOTIFICATION SPLIT:
+    // - A direct comment alerts the OG poster, original-post reactors, and
+    //   other direct commenters.
+    // - A nested reply alerts only the exact parent-comment author.
+    const participantNotifications = parentCommentId
+      ? []
+      : await createForumParticipantNotifications({
+        actorId: req.user.user_id,
+        postId,
+        commentId: comment.comment_id,
+        activity: "comment",
+      });
+    const replyNotification = parentCommentId
+      ? await createDirectReplyNotification({
+        actorId: req.user.user_id,
+        postId,
+        parentCommentId,
+        commentId: comment.comment_id,
+      })
+      : null;
 
-    // TRACE STEP 3: every returned row is already durable in PostgreSQL. Push
-    // it now too, so online participants see the same alert immediately.
+    // Every returned row is already durable. Socket.IO mirrors it immediately
+    // for recipients who happen to be online.
     for (const notification of participantNotifications) {
       notifyUser(notification.user_id, "notification", notification);
+    }
+    if (replyNotification) {
+      notifyUser(replyNotification.user_id, "notification", replyNotification);
     }
 
     const savedIds = new Set(savedMentions.map((mention) => mention.mentioned_user_id));
@@ -320,8 +335,11 @@ router.post("/posts/:id/comments", async (req, res) => {
       actorId: req.user.user_id,
       postId,
       commentId: comment.comment_id,
-      // A participant who was also @mentioned already has the activity alert.
-      skipUserIds: participantNotifications.map((notification) => notification.user_id),
+      // Do not give the same person an activity alert plus a mention alert.
+      skipUserIds: [
+        ...participantNotifications.map((notification) => notification.user_id),
+        ...(replyNotification ? [replyNotification.user_id] : []),
+      ],
     });
   } catch (error) {
     // The reply is already saved. A notification failure should not make

@@ -30,6 +30,7 @@ import {
   updateForumPostModeration,
 } from "#db/queries/forum";
 import {
+  createDirectReplyNotification,
   createForumParticipantNotifications,
   createStaffFlagNotifications,
 } from "#db/queries/notifications";
@@ -205,19 +206,32 @@ try {
   const otherMember = await createUser("delete-other@example.com", "delete-other", "password-123", 100);
   const moderator = await createUser("delete-mod@example.com", "delete-mod", "password-123", 50);
   const administrator = await createUser("delete-admin@example.com", "delete-admin", "password-123", 10);
+  const nestedOnlyMember = await createUser("nested-only@example.com", "nested-only", "password-123", 100);
 
-  // Facebook-style conversation alerts go to the unique set of OG poster,
-  // original-post reactors, and commenters. The member causing the new event
-  // must never receive their own alert.
+  // Owner-approved broad alerts go to the unique set of OG poster,
+  // original-post reactors, and direct commenters. Nested-only participants
+  // stay outside that group and the actor never receives their own alert.
   const participantPost = await createForumPost({
     categoryId: category.category_id, authorId: owner.user_id,
     title: "Participant alerts", body: "Everyone involved stays in the loop.",
   });
   await setForumPostReaction(participantPost.post_id, memberAuthor.user_id, "support");
-  await createForumComment({
+  const existingDirectComment = await createForumComment({
     postId: participantPost.post_id, authorId: otherMember.user_id,
     parentCommentId: null, body: "Existing participant comment.",
   });
+  const nestedReply = await createForumComment({
+    postId: participantPost.post_id, authorId: nestedOnlyMember.user_id,
+    parentCommentId: existingDirectComment.comment_id, body: "A targeted nested reply.",
+  });
+  const targetedReplyAlert = await createDirectReplyNotification({
+    actorId: nestedOnlyMember.user_id,
+    postId: participantPost.post_id,
+    parentCommentId: existingDirectComment.comment_id,
+    commentId: nestedReply.comment_id,
+  });
+  assert.equal(targetedReplyAlert.user_id, otherMember.user_id);
+  assert.equal(targetedReplyAlert.type, "reply_to_comment");
   const moderatorComment = await createForumComment({
     postId: participantPost.post_id, authorId: moderator.user_id,
     parentCommentId: null, body: "New activity that triggers alerts.",
@@ -232,6 +246,7 @@ try {
     commentAlerts.map((alert) => alert.user_id).sort((a, b) => a - b),
     [owner.user_id, memberAuthor.user_id, otherMember.user_id].sort((a, b) => a - b)
   );
+  assert.equal(commentAlerts.some((alert) => alert.user_id === nestedOnlyMember.user_id), false);
   assert.ok(commentAlerts.every((alert) => alert.type === "comment_on_participated_post"));
 
   await setForumPostReaction(participantPost.post_id, administrator.user_id, "care");
@@ -244,6 +259,7 @@ try {
     reactionAlerts.map((alert) => alert.user_id).sort((a, b) => a - b),
     [owner.user_id, memberAuthor.user_id, otherMember.user_id, moderator.user_id].sort((a, b) => a - b)
   );
+  assert.equal(reactionAlerts.some((alert) => alert.user_id === nestedOnlyMember.user_id), false);
   assert.ok(reactionAlerts.every((alert) => alert.type === "reaction_on_participated_post"));
 
   // Edit permissions: members cannot edit even their own content; moderator

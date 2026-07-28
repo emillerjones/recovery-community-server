@@ -54,9 +54,9 @@ export async function createStaffFlagNotifications({ actorId, postId, commentId 
 }
 
 export async function createForumParticipantNotifications({ actorId, postId, commentId = null, activity }) {
-  // A participant is anyone who authored the post, reacted to the original
-  // post, or commented anywhere beneath it. UNION removes duplicates before
-  // the insert, even when one member belongs to all three groups.
+  // The owner-approved participant group is deliberately narrow: the OG
+  // poster, original-post reactors, and direct commenters only. Replies below
+  // another comment are targeted conversations and do not join this group.
   const type = activity === "reaction"
     ? "reaction_on_participated_post"
     : "comment_on_participated_post";
@@ -69,7 +69,10 @@ export async function createForumParticipantNotifications({ actorId, postId, com
         UNION
         SELECT author_id AS user_id
         FROM comments
-        WHERE post_id = $2 AND active = TRUE AND deleted_at IS NULL
+        WHERE post_id = $2
+          AND parent_comment_id IS NULL
+          AND active = TRUE
+          AND deleted_at IS NULL
       ), eligible_recipients AS (
         SELECT participant.user_id
         FROM participant_ids participant
@@ -94,6 +97,40 @@ export async function createForumParticipantNotifications({ actorId, postId, com
     [actorId, postId, type, commentId]
   );
   return rows;
+}
+
+export async function createDirectReplyNotification({ actorId, postId, parentCommentId, commentId }) {
+  // A nested reply is one-to-one: notify only the author of the exact comment
+  // being replied to. Confirm that parent belongs to this post and that its
+  // author is still eligible before inserting the permanent notification.
+  const { rows: [notification] } = await db.query(
+    `
+      WITH recipient AS (
+        SELECT parent.author_id AS user_id
+        FROM comments parent
+        JOIN users author ON author.user_id = parent.author_id
+        WHERE parent.comment_id = $3
+          AND parent.post_id = $2
+          AND parent.deleted_at IS NULL
+          AND parent.author_id <> $1
+          AND author.account_status = 'approved'
+          AND author.active = TRUE
+          AND author.deleted_at IS NULL
+          AND author.is_system = FALSE
+      ), inserted AS (
+        INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+        SELECT user_id, $1, 'reply_to_comment', $2, $4
+        FROM recipient
+        RETURNING *
+      )
+      SELECT inserted.*, actor.username AS actor_username, p.title AS post_title
+      FROM inserted
+      JOIN users actor ON actor.user_id = inserted.actor_id
+      JOIN posts p ON p.post_id = inserted.post_id
+    `,
+    [actorId, postId, parentCommentId, commentId]
+  );
+  return notification;
 }
 
 export async function getNewPostNotifications(postId) {
