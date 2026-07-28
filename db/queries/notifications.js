@@ -23,6 +23,36 @@ export async function createNotification({ userId, actorId, type, postId, commen
   return notification;
 }
 
+export async function createStaffFlagNotifications({ actorId, postId, commentId = null }) {
+  // FLAG ALERT TRACE STEP 3: insert one durable alert for every active owner,
+  // administrator, and moderator. The flagging person is excluded if they are
+  // staff, and ordinary members/content authors never enter this recipient set.
+  const type = commentId ? "flagged_comment" : "flagged_post";
+  const { rows } = await db.query(
+    `
+      WITH inserted AS (
+        INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+        SELECT staff.user_id, $1, $2, $3, $4
+        FROM users staff
+        WHERE staff.role_id <= 50
+          AND staff.account_status = 'approved'
+          AND staff.active = TRUE
+          AND staff.deleted_at IS NULL
+          AND staff.is_system = FALSE
+          AND staff.user_id <> $1
+        RETURNING *
+      )
+      SELECT inserted.*, actor.username AS actor_username, p.title AS post_title
+      FROM inserted
+      JOIN users actor ON actor.user_id = inserted.actor_id
+      JOIN posts p ON p.post_id = inserted.post_id
+      ORDER BY inserted.notification_id
+    `,
+    [actorId, type, postId, commentId]
+  );
+  return rows;
+}
+
 export async function getNewPostNotifications(postId) {
   // NEW POST ALERT TRACE STEP 3: the database trigger has already inserted one
   // durable row per eligible member. Return those fresh rows with the display

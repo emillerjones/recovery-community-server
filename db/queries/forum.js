@@ -540,14 +540,19 @@ export async function flagForumComment(commentId, flaggedBy, reason) {
     rows: [flag],
   } = await db.query(
     `
-      INSERT INTO forum_content_flags (comment_id, flagged_by, reason)
-      SELECT comment_id, $2, $3
-      FROM comments
-      WHERE comment_id = $1
-        AND author_id <> $2
-        AND deleted_at IS NULL
-      ON CONFLICT DO NOTHING
-      RETURNING *
+      WITH inserted AS (
+        INSERT INTO forum_content_flags (comment_id, flagged_by, reason)
+        SELECT comment_id, $2, $3
+        FROM comments
+        WHERE comment_id = $1
+          AND author_id <> $2
+          AND deleted_at IS NULL
+        ON CONFLICT DO NOTHING
+        RETURNING *
+      )
+      SELECT inserted.*, comments.post_id
+      FROM inserted
+      JOIN comments ON comments.comment_id = inserted.comment_id
     `,
     [commentId, flaggedBy, reason || null]
   );

@@ -17,12 +17,15 @@ import {
 import {
   createForumComment,
   createForumPost,
+  flagForumComment,
+  flagForumPost,
   softDeleteForumComment,
   softDeleteForumPost,
   updateForumComment,
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
+import { createStaffFlagNotifications } from "#db/queries/notifications";
 import { createSecureToken, hashSecret } from "#utils/secureTokens";
 
 const schemaName = "codex_registration_integration";
@@ -238,6 +241,42 @@ try {
   );
   assert.equal(commentRevisionCount, 2);
 
+  // Flag alerts: every active human staff account gets an in-app alert, while
+  // members, the system account, and the person who raised the flag do not.
+  const postFlag = await flagForumPost(
+    memberEditPost.post_id, otherMember.user_id, "Needs staff review"
+  );
+  assert.ok(postFlag);
+  const postFlagAlerts = await createStaffFlagNotifications({
+    actorId: otherMember.user_id,
+    postId: memberEditPost.post_id,
+  });
+  assert.deepEqual(
+    postFlagAlerts.map(({ user_id }) => user_id).sort((a, b) => a - b),
+    [owner.user_id, administrator.user_id, moderator.user_id].sort((a, b) => a - b)
+  );
+  assert.ok(postFlagAlerts.every(({ type }) => type === "flagged_post"));
+  assert.equal(postFlagAlerts.some(({ user_id }) => user_id === memberAuthor.user_id), false);
+  assert.equal(postFlagAlerts.some(({ user_id }) => user_id === systemUser.user_id), false);
+
+  // When a staff member flags a reply, that actor is excluded from the alert
+  // list. The query also returns the reply's real post for a safe direct link.
+  const commentFlag = await flagForumComment(
+    editableComment.comment_id, moderator.user_id, "Needs staff review"
+  );
+  assert.equal(commentFlag.post_id, memberEditPost.post_id);
+  const commentFlagAlerts = await createStaffFlagNotifications({
+    actorId: moderator.user_id,
+    postId: commentFlag.post_id,
+    commentId: editableComment.comment_id,
+  });
+  assert.deepEqual(
+    commentFlagAlerts.map(({ user_id }) => user_id).sort((a, b) => a - b),
+    [owner.user_id, administrator.user_id].sort((a, b) => a - b)
+  );
+  assert.ok(commentFlagAlerts.every(({ type }) => type === "flagged_comment"));
+  assert.ok(commentFlagAlerts.every(({ comment_id }) => comment_id === editableComment.comment_id));
+
   const branchPost = await createForumPost({
     categoryId: category.category_id, authorId: memberAuthor.user_id,
     title: "Nested deletion", body: "Testing a complete reply branch.",
@@ -293,7 +332,7 @@ try {
   });
   assert.ok(await softDeleteForumPost(ownerPost.post_id, owner.user_id, true));
 
-  console.log("Integration test passed: registration, welcome alerts, protected system account, edit history, and recursive delete permissions.");
+  console.log("Integration test passed: registration, welcome alerts, staff flag alerts, protected system account, edit history, and recursive delete permissions.");
 } finally {
   await db.query("ROLLBACK");
   await db.end();

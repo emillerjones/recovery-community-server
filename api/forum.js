@@ -30,7 +30,11 @@ import {
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
-import { createNotification, createOrGroupReactionNotification } from "#db/queries/notifications";
+import {
+  createNotification,
+  createOrGroupReactionNotification,
+  createStaffFlagNotifications,
+} from "#db/queries/notifications";
 import { getActiveMentionUsers } from "#db/queries/users";
 import { notifyThread, notifyUser } from "#utils/socket";
 import { broadcastNewPostAlerts } from "#utils/newPostAlerts";
@@ -47,6 +51,15 @@ const REACTION_TYPES = new Set([
   "care",
 ]);
 const MAX_MENTIONS = 5;
+
+async function notifyStaffOfFlag({ actorId, postId, commentId = null }) {
+  // FLAG ALERT TRACE STEP 4: PostgreSQL returns the exact staff alerts it just
+  // stored. Push each one to that staff member's private Socket.IO room.
+  const notifications = await createStaffFlagNotifications({ actorId, postId, commentId });
+  for (const notification of notifications) {
+    notifyUser(notification.user_id, "notification", notification);
+  }
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -365,6 +378,12 @@ router.post("/posts/:id/flag", async (req, res) => {
 
   const flag = await flagForumPost(postId, req.user.user_id, reason);
   if (!flag) return res.status(400).send({ message: "This content cannot be flagged or is already flagged by you." });
+  try {
+    // FLAG ALERT TRACE STEP 2A: only a newly saved flag reaches this point.
+    await notifyStaffOfFlag({ actorId: req.user.user_id, postId });
+  } catch (error) {
+    console.error("Failed to notify staff about a flagged post:", error);
+  }
   res.status(201).send({ flagged: true });
 });
 
@@ -460,6 +479,16 @@ router.post("/posts/:id/comments/:commentId/flag", async (req, res) => {
 
   const flag = await flagForumComment(commentId, req.user.user_id, reason);
   if (!flag) return res.status(400).send({ message: "This content cannot be flagged or is already flagged by you." });
+  try {
+    // FLAG ALERT TRACE STEP 2B: link staff directly to this reply in its post.
+    await notifyStaffOfFlag({
+      actorId: req.user.user_id,
+      postId: flag.post_id,
+      commentId,
+    });
+  } catch (error) {
+    console.error("Failed to notify staff about a flagged reply:", error);
+  }
   res.status(201).send({ flagged: true });
 });
 
