@@ -379,36 +379,72 @@ export async function updateForumPost(postId, authorId, { title, body }) {
   return post;
 }
 
-export async function softDeleteForumPost(postId, authorId, isModerator = false) {
+export async function softDeleteForumPost(postId, actorId, canDeleteOthers = false) {
   const {
     rows: [post],
   } = await db.query(
     `
-      UPDATE posts
-      SET active = FALSE, deleted_at = NOW(), updated_at = NOW()
-      WHERE post_id = $1
-        AND deleted_at IS NULL
-        AND (author_id = $2 OR $3)
-      RETURNING *
+      WITH deleted_post AS (
+        UPDATE posts
+        SET active = FALSE, deleted_at = NOW(), updated_at = NOW()
+        WHERE post_id = $1
+          AND deleted_at IS NULL
+          AND (author_id = $2 OR $3)
+        RETURNING *
+      ), deleted_comments AS (
+        UPDATE comments
+        SET active = FALSE, deleted_at = NOW(), updated_at = NOW()
+        WHERE post_id = (SELECT post_id FROM deleted_post)
+          AND deleted_at IS NULL
+        RETURNING comment_id
+      )
+      SELECT deleted_post.*, COUNT(deleted_comments.comment_id)::INT AS deleted_comment_count
+      FROM deleted_post
+      LEFT JOIN deleted_comments ON TRUE
+      GROUP BY deleted_post.post_id, deleted_post.category_id, deleted_post.author_id,
+        deleted_post.title, deleted_post.body, deleted_post.pinned, deleted_post.locked,
+        deleted_post.active, deleted_post.deleted_at, deleted_post.created_at,
+        deleted_post.updated_at, deleted_post.content_edited_at, deleted_post.welcome_member_id
     `,
-    [postId, authorId, isModerator]
+    [postId, actorId, canDeleteOthers]
   );
   return post;
 }
 
-export async function softDeleteForumComment(commentId, authorId, isModerator = false) {
+export async function softDeleteForumComment(postId, commentId, actorId, canDeleteOthers = false) {
   const {
     rows: [comment],
   } = await db.query(
     `
-      UPDATE comments
-      SET deleted_at = NOW(), updated_at = NOW()
-      WHERE comment_id = $1
-        AND deleted_at IS NULL
-        AND (author_id = $2 OR $3)
-      RETURNING *
+      WITH RECURSIVE permitted_root AS (
+        SELECT *
+        FROM comments
+        WHERE post_id = $1
+          AND comment_id = $2
+          AND deleted_at IS NULL
+          AND (author_id = $3 OR $4)
+      ), comment_branch AS (
+        SELECT comment_id
+        FROM permitted_root
+        UNION ALL
+        SELECT child.comment_id
+        FROM comments child
+        JOIN comment_branch parent ON child.parent_comment_id = parent.comment_id
+        WHERE child.post_id = $1 AND child.deleted_at IS NULL
+      ), deleted_comments AS (
+        UPDATE comments
+        SET active = FALSE, deleted_at = NOW(), updated_at = NOW()
+        WHERE comment_id IN (SELECT comment_id FROM comment_branch)
+        RETURNING *
+      )
+      SELECT root.*, branch.deleted_count
+      FROM deleted_comments root
+      CROSS JOIN (
+        SELECT COUNT(*)::INT AS deleted_count FROM deleted_comments
+      ) branch
+      WHERE root.comment_id = $2
     `,
-    [commentId, authorId, isModerator]
+    [postId, commentId, actorId, canDeleteOthers]
   );
   return comment;
 }

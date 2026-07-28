@@ -111,7 +111,9 @@ ALTER TABLE posts ADD COLUMN IF NOT EXISTS welcome_member_id INT;
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'posts_welcome_member_id_fkey'
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'posts_welcome_member_id_fkey'
+      AND conrelid = 'posts'::regclass
   ) THEN
     ALTER TABLE posts
       ADD CONSTRAINT posts_welcome_member_id_fkey
@@ -122,7 +124,9 @@ END $$;
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'posts_welcome_member_id_unique'
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'posts_welcome_member_id_unique'
+      AND conrelid = 'posts'::regclass
   ) THEN
     ALTER TABLE posts
       ADD CONSTRAINT posts_welcome_member_id_unique UNIQUE (welcome_member_id);

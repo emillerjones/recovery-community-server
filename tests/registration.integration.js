@@ -14,7 +14,14 @@ import { createRegistration, verifyEmail } from "#db/queries/registration";
 import {
   createPersonalInvite, createSharedCode, reviewApplication,
 } from "#db/queries/admissions";
-import { updateForumPost, updateForumPostModeration } from "#db/queries/forum";
+import {
+  createForumComment,
+  createForumPost,
+  softDeleteForumComment,
+  softDeleteForumPost,
+  updateForumPost,
+  updateForumPostModeration,
+} from "#db/queries/forum";
 import { createSecureToken, hashSecret } from "#utils/secureTokens";
 
 const schemaName = "codex_registration_integration";
@@ -145,7 +152,70 @@ try {
   const { rows: [restoredCode] } = await db.query("SELECT use_count FROM shared_invite_codes");
   assert.equal(restoredCode.use_count, 0);
 
-  console.log("Registration integration test passed: system protection, all three welcome-post flows, all-member alerts, and test-account cleanup.");
+  // Delete permissions: members/moderators can remove only their own content;
+  // owner/admin may remove anyone's. Comment removal recursively soft-deletes
+  // the complete child branch, while post removal covers every reply.
+  const memberAuthor = await createUser("delete-author@example.com", "delete-author", "password-123", 100);
+  const otherMember = await createUser("delete-other@example.com", "delete-other", "password-123", 100);
+  const moderator = await createUser("delete-mod@example.com", "delete-mod", "password-123", 50);
+  const administrator = await createUser("delete-admin@example.com", "delete-admin", "password-123", 10);
+
+  const branchPost = await createForumPost({
+    categoryId: category.category_id, authorId: memberAuthor.user_id,
+    title: "Nested deletion", body: "Testing a complete reply branch.",
+  });
+  const rootReply = await createForumComment({
+    postId: branchPost.post_id, authorId: memberAuthor.user_id,
+    parentCommentId: null, body: "Root reply",
+  });
+  const childReply = await createForumComment({
+    postId: branchPost.post_id, authorId: otherMember.user_id,
+    parentCommentId: rootReply.comment_id, body: "Child reply",
+  });
+  await createForumComment({
+    postId: branchPost.post_id, authorId: moderator.user_id,
+    parentCommentId: childReply.comment_id, body: "Grandchild reply",
+  });
+
+  assert.equal(await softDeleteForumComment(
+    branchPost.post_id, rootReply.comment_id, moderator.user_id, false
+  ), undefined);
+  const deletedBranch = await softDeleteForumComment(
+    branchPost.post_id, rootReply.comment_id, memberAuthor.user_id, false
+  );
+  assert.equal(deletedBranch.deleted_count, 3);
+  const { rows: [{ count: activeBranchCount }] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM comments WHERE post_id = $1 AND deleted_at IS NULL",
+    [branchPost.post_id]
+  );
+  assert.equal(activeBranchCount, 0);
+
+  const adminPost = await createForumPost({
+    categoryId: category.category_id, authorId: otherMember.user_id,
+    title: "Administrator deletion", body: "Administrator permission test.",
+  });
+  await createForumComment({
+    postId: adminPost.post_id, authorId: memberAuthor.user_id,
+    parentCommentId: null, body: "Reply removed with post",
+  });
+  assert.equal(await softDeleteForumPost(adminPost.post_id, moderator.user_id, false), undefined);
+  const adminDeletedPost = await softDeleteForumPost(adminPost.post_id, administrator.user_id, true);
+  assert.equal(adminDeletedPost.deleted_comment_count, 1);
+
+  const ownPost = await createForumPost({
+    categoryId: category.category_id, authorId: memberAuthor.user_id,
+    title: "Author deletion", body: "Authors retain deletion rights.",
+  });
+  await updateForumPostModeration(ownPost.post_id, { locked: true });
+  assert.ok(await softDeleteForumPost(ownPost.post_id, memberAuthor.user_id, false));
+
+  const ownerPost = await createForumPost({
+    categoryId: category.category_id, authorId: otherMember.user_id,
+    title: "Owner deletion", body: "Owner permission test.",
+  });
+  assert.ok(await softDeleteForumPost(ownerPost.post_id, owner.user_id, true));
+
+  console.log("Integration test passed: registration, welcome alerts, protected system account, and recursive delete permissions.");
 } finally {
   await db.query("ROLLBACK");
   await db.end();

@@ -289,19 +289,25 @@ router.patch("/posts/:id", async (req, res) => {
 
 router.delete("/posts/:id", async (req, res) => {
   const postId = Number(req.params.id);
-  const isModerator = req.user.role_id <= 50;
+  const canDeleteOthers = req.user.role_id <= 10;
 
-  const post = await softDeleteForumPost(postId, req.user.user_id, isModerator);
-  if (!post) return res.status(404).send({ message: "Post not found or not yours to delete." });
+  // DELETE TRACE STEP 2A: members and moderators may delete only their own
+  // post. Owner/admin is the only staff exception allowed to delete another
+  // member's post. The query also soft-deletes every reply under that post.
+  const post = await softDeleteForumPost(postId, req.user.user_id, canDeleteOthers);
+  if (!post) return res.status(404).send({ message: "Post not found or you do not have permission to delete it." });
   res.send(post);
 });
 
 router.delete("/posts/:id/comments/:commentId", async (req, res) => {
+  const postId = Number(req.params.id);
   const commentId = Number(req.params.commentId);
-  const isModerator = req.user.role_id <= 50;
+  const canDeleteOthers = req.user.role_id <= 10;
 
-  const comment = await softDeleteForumComment(commentId, req.user.user_id, isModerator);
-  if (!comment) return res.status(404).send({ message: "Reply not found or not yours to delete." });
+  // DELETE TRACE STEP 2B: the same permission rule applies to comments. The
+  // recursive query removes this reply and every generation below it.
+  const comment = await softDeleteForumComment(postId, commentId, req.user.user_id, canDeleteOthers);
+  if (!comment) return res.status(404).send({ message: "Reply not found or you do not have permission to delete it." });
   res.send(comment);
 });
 
