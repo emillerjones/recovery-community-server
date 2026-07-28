@@ -229,6 +229,12 @@ CREATE TABLE IF NOT EXISTS comments (
     REFERENCES comments(comment_id, post_id)
 );
 
+-- The forum feed repeatedly counts comments and finds the newest activity for
+-- one post. This partial index keeps that work focused on visible replies.
+CREATE INDEX IF NOT EXISTS idx_comments_post_active_created
+  ON comments (post_id, created_at DESC)
+  WHERE active = TRUE AND deleted_at IS NULL;
+
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS content_edited_at TIMESTAMP DEFAULT NULL;
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS content_edited_by INT;
 

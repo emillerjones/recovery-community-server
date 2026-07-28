@@ -53,15 +53,26 @@ export async function updateForumTag(tagId, { name, slug, description, active })
   return tag;
 }
 
-export async function getForumPosts({ categorySlug, tagSlugs = [], search, viewerId } = {}) {
+export async function getForumPosts({
+  categorySlug, section = "community", tagSlugs = [], search,
+  sort = "recent", viewerId, page = 0, limit = 20,
+} = {}) {
   const values = [viewerId ?? null];
   let categoryFilter = "";
   let searchFilter = "";
   let tagFilter = "";
+  let memberFilter = "";
+  let savedFilter = "";
 
   if (categorySlug) {
     values.push(categorySlug);
     categoryFilter = `AND c.slug = $${values.length}`;
+  }
+
+  if (!categorySlug && section === "announcements") {
+    categoryFilter = "AND c.slug = 'announcements'";
+  } else if (!categorySlug && section === "community") {
+    categoryFilter = "AND c.slug NOT IN ('announcements', 'success-stories')";
   }
 
   if (search) {
@@ -81,18 +92,31 @@ export async function getForumPosts({ categorySlug, tagSlugs = [], search, viewe
     )`;
   }
 
+
+  if (sort === "mine") memberFilter = "AND p.author_id = $1";
+  if (sort === "saved") {
+    savedFilter = `AND EXISTS (
+      SELECT 1 FROM forum_saved_posts saved_filter
+      WHERE saved_filter.post_id = p.post_id AND saved_filter.user_id = $1
+    )`;
+  }
+
+  const orderBy = sort === "discussed"
+    ? "comment_count DESC, latest_activity_at DESC, p.post_id DESC"
+    : "p.pinned DESC, latest_activity_at DESC, p.post_id DESC";
+  values.push(limit + 1, page * limit);
+  const limitParameter = values.length - 1;
+  const offsetParameter = values.length;
+
   const { rows } = await db.query(
     `
       SELECT
         p.post_id,
         p.title,
-        p.body,
+        LEFT(p.body, 500) AS body,
         p.pinned,
         p.locked,
         p.created_at,
-        p.updated_at,
-        c.category_id,
-        c.name AS category_name,
         c.slug AS category_slug,
         u.user_id AS author_id,
         u.username AS author_username,
@@ -107,77 +131,39 @@ export async function getForumPosts({ categorySlug, tagSlugs = [], search, viewe
           JOIN forum_tags tag ON tag.tag_id = post_tag.tag_id
           WHERE post_tag.post_id = p.post_id AND tag.active = TRUE
         ), '[]'::jsonb) AS tags,
-        COUNT(cm.comment_id)::INT AS comment_count,
-        GREATEST(p.updated_at, COALESCE(MAX(cm.created_at), p.updated_at)) AS latest_activity_at,
+        COALESCE(comment_stats.comment_count, 0)::INT AS comment_count,
+        GREATEST(p.updated_at, COALESCE(comment_stats.latest_comment_at, p.updated_at)) AS latest_activity_at,
         EXISTS(
           SELECT 1 FROM forum_saved_posts sp
           WHERE sp.post_id = p.post_id AND sp.user_id = $1
         ) AS saved_by_me,
-        COALESCE((
-          SELECT jsonb_object_agg(reaction_counts.reaction_type, reaction_counts.reaction_count)
-          FROM (
-            SELECT fr.reaction_type, COUNT(*)::INT AS reaction_count
-            FROM forum_reactions fr
-            WHERE fr.post_id = p.post_id
-            GROUP BY fr.reaction_type
-          ) reaction_counts
-        ), '{}'::jsonb) AS reactions,
-        (
-          SELECT fr.reaction_type
-          FROM forum_reactions fr
-          WHERE fr.post_id = p.post_id AND fr.user_id = $1
-        ) AS my_reaction,
-        COALESCE((
-          SELECT jsonb_agg(jsonb_build_object(
-            'comment_id', preview.comment_id,
-            'body', preview.body,
-            'created_at', preview.created_at,
-            'author_username', preview.author_username,
-            'author_avatar_url', preview.author_avatar_url
-          ) ORDER BY preview.created_at)
-          FROM (
-            SELECT
-              recent.comment_id,
-              recent.body,
-              recent.created_at,
-              recent.author_username,
-              recent.author_avatar_url
-            FROM (
-              SELECT
-                cm_preview.comment_id,
-                cm_preview.body,
-                cm_preview.created_at,
-                preview_author.username AS author_username,
-                preview_author.avatar_url AS author_avatar_url
-              FROM comments cm_preview
-              JOIN users preview_author ON preview_author.user_id = cm_preview.author_id
-              WHERE cm_preview.post_id = p.post_id
-                AND cm_preview.active = TRUE
-                AND cm_preview.deleted_at IS NULL
-              ORDER BY cm_preview.created_at DESC
-              LIMIT 2
-            ) recent
-          ) preview
-        ), '[]'::jsonb) AS comment_preview
+        (SELECT COUNT(*)::INT FROM forum_reactions fr WHERE fr.post_id = p.post_id) AS reaction_count
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
-      LEFT JOIN comments cm
-        ON cm.post_id = p.post_id
-        AND cm.active = TRUE
-        AND cm.deleted_at IS NULL
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::INT AS comment_count, MAX(cm.created_at) AS latest_comment_at
+        FROM comments cm
+        WHERE cm.post_id = p.post_id
+          AND cm.active = TRUE
+          AND cm.deleted_at IS NULL
+      ) comment_stats ON TRUE
       WHERE p.active = TRUE
         AND p.deleted_at IS NULL
         AND c.active = TRUE
         ${categoryFilter}
         ${tagFilter}
         ${searchFilter}
-      GROUP BY p.post_id, c.category_id, u.user_id
-      ORDER BY p.pinned DESC, latest_activity_at DESC
+        ${memberFilter}
+        ${savedFilter}
+      ORDER BY ${orderBy}
+      LIMIT $${limitParameter}
+      OFFSET $${offsetParameter}
     `,
     values
   );
-  return rows;
+  const hasMore = rows.length > limit;
+  return { posts: rows.slice(0, limit), has_more: hasMore, next_page: hasMore ? page + 1 : null };
 }
 
 export async function getForumPostById(postId, viewerId) {

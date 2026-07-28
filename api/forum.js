@@ -146,11 +146,17 @@ router.patch("/tags/:id", async (req, res) => {
 router.get("/posts", async (req, res) => {
   const tagSlugs = String(req.query.tags || req.query.tag || "")
     .split(",").map((slug) => slug.trim()).filter(Boolean).slice(0, 10);
+  const sort = ["recent", "discussed", "mine", "saved"].includes(req.query.sort) ? req.query.sort : "recent";
+  const page = Math.max(0, Number.parseInt(req.query.page, 10) || 0);
   res.send(await getForumPosts({
     categorySlug: req.query.category,
+    section: req.query.section === "announcements" ? "announcements" : "community",
     tagSlugs,
     search: req.query.search,
+    sort,
     viewerId: req.user.user_id,
+    page,
+    limit: 20,
   }));
 });
 

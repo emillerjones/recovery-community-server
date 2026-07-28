@@ -64,6 +64,15 @@ try {
     "utf8"
   )).replace(/^BEGIN;\s*/i, "").replace(/\s*COMMIT;\s*$/i, "");
   await db.query(tagMigration);
+  const feedIndexMigration = (await fs.readFile(
+    new URL("../db/migrations/011_add_forum_feed_index.sql", import.meta.url),
+    "utf8"
+  )).replace(/^BEGIN;\s*/i, "").replace(/\s*COMMIT;\s*$/i, "");
+  await db.query(feedIndexMigration);
+  const { rows: [feedIndex] } = await db.query(
+    "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_comments_post_active_created'"
+  );
+  assert.equal(feedIndex.indexname, "idx_comments_post_active_created");
   await db.query(`INSERT INTO user_roles (role_id, role_name) VALUES
     (1, 'owner'), (10, 'administrator'), (50, 'moderator'), (100, 'member'), (1000, 'system')`);
   const owner = await createUser("owner@example.com", "owner", "owner-password", 1);
@@ -191,7 +200,7 @@ try {
   const questionTag = activeTags.find((tag) => tag.slug === "question");
   assert.ok(questionTag);
   await setForumPostTags(memberEditPost.post_id, [questionTag.tag_id]);
-  const taggedPosts = await getForumPosts({ tagSlugs: ["question"], viewerId: memberAuthor.user_id });
+  const { posts: taggedPosts } = await getForumPosts({ tagSlugs: ["question"], viewerId: memberAuthor.user_id });
   assert.equal(taggedPosts.some((post) => post.post_id === memberEditPost.post_id), true);
   assert.equal(taggedPosts.find((post) => post.post_id === memberEditPost.post_id).tags[0].slug, "question");
 
@@ -201,11 +210,23 @@ try {
     title: "A twelve-step question", body: "Looking for shared experience.",
   });
   await setForumPostTags(stepsPost.post_id, [stepsTag.tag_id]);
-  const eitherTagPosts = await getForumPosts({
+  const { posts: eitherTagPosts } = await getForumPosts({
     tagSlugs: ["question", "12steps"], viewerId: memberAuthor.user_id,
   });
   assert.equal(eitherTagPosts.some((post) => post.post_id === memberEditPost.post_id), true);
   assert.equal(eitherTagPosts.some((post) => post.post_id === stepsPost.post_id), true);
+  const firstFeedPage = await getForumPosts({ viewerId: memberAuthor.user_id, limit: 1, page: 0 });
+  assert.equal(firstFeedPage.posts.length, 1);
+  assert.equal(firstFeedPage.has_more, true);
+  assert.equal(firstFeedPage.next_page, 1);
+  const { posts: ownFeed } = await getForumPosts({ viewerId: memberAuthor.user_id, sort: "mine" });
+  assert.ok(ownFeed.every((post) => post.author_id === memberAuthor.user_id));
+  await db.query(
+    "INSERT INTO forum_saved_posts (user_id, post_id) VALUES ($1, $2)",
+    [otherMember.user_id, memberEditPost.post_id]
+  );
+  const { posts: savedFeed } = await getForumPosts({ viewerId: otherMember.user_id, sort: "saved" });
+  assert.deepEqual(savedFeed.map((post) => post.post_id), [memberEditPost.post_id]);
 
   const { rows: [announcementCategory] } = await db.query(
     "SELECT category_id FROM forum_categories WHERE slug = 'announcements'"
