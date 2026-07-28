@@ -4,12 +4,14 @@ import {
   createForumComment,
   createForumMentions,
   createForumPost,
+  createForumTag,
   getForumCategories,
   getForumComments,
   getForumNotificationRecipient,
   getForumReactionTarget,
   getForumPostById,
   getForumPosts,
+  getForumTags,
   getFlaggedForumComments,
   getFlaggedForumPosts,
   flagForumComment,
@@ -19,6 +21,7 @@ import {
   saveForumPost,
   setForumCommentReaction,
   setForumPostReaction,
+  setForumPostTags,
   softDeleteForumComment,
   softDeleteForumPost,
   unflagForumComment,
@@ -29,6 +32,7 @@ import {
   updateForumComment,
   updateForumPost,
   updateForumPostModeration,
+  updateForumTag,
 } from "#db/queries/forum";
 import {
   createNotification,
@@ -108,9 +112,41 @@ router.get("/categories", async (req, res) => {
   res.send(await getForumCategories());
 });
 
+router.get("/tags", async (req, res) => {
+  res.send(await getForumTags({ includeInactive: req.user.role_id <= 50 && req.query.all === "true" }));
+});
+
+function tagSlug(value) {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+router.post("/tags", async (req, res) => {
+  if (req.user.role_id > 50) return res.status(403).send({ message: "Staff access is required." });
+  const name = req.body.name?.trim();
+  const slug = tagSlug(req.body.slug || name || "");
+  if (!name || !slug || name.length > 40) return res.status(400).send({ message: "Enter a tag name up to 40 characters." });
+  const tag = await createForumTag({ name, slug, description: req.body.description, createdBy: req.user.user_id });
+  res.status(201).send(tag);
+});
+
+router.patch("/tags/:id", async (req, res) => {
+  if (req.user.role_id > 50) return res.status(403).send({ message: "Staff access is required." });
+  const name = req.body.name?.trim();
+  const slug = tagSlug(req.body.slug || name || "");
+  if (!name || !slug || name.length > 40 || typeof req.body.active !== "boolean") {
+    return res.status(400).send({ message: "Name and active status are required." });
+  }
+  const tag = await updateForumTag(Number(req.params.id), {
+    name, slug, description: req.body.description, active: req.body.active,
+  });
+  if (!tag) return res.status(404).send({ message: "Tag not found." });
+  res.send(tag);
+});
+
 router.get("/posts", async (req, res) => {
   res.send(await getForumPosts({
     categorySlug: req.query.category,
+    tagSlug: req.query.tag,
     search: req.query.search,
     viewerId: req.user.user_id,
   }));
@@ -128,8 +164,10 @@ router.post("/posts", async (req, res) => {
   const categoryId = Number(req.body.category_id);
   const title = req.body.title?.trim();
   const body = req.body.body?.trim();
+  const tagIds = [...new Set((Array.isArray(req.body.tag_ids) ? req.body.tag_ids : [])
+    .map(Number).filter(Number.isInteger))];
 
-  if (!Number.isInteger(categoryId) || !title || !body) {
+  if (!Number.isInteger(categoryId) || !title || !body || tagIds.length > 3) {
     return res.status(400).send({ message: "Category, title, and message are required." });
   }
 
@@ -147,9 +185,18 @@ router.post("/posts", async (req, res) => {
     authorId: req.user.user_id,
     title,
     body,
+    canPostAnnouncements: req.user.role_id <= 50,
   });
 
   if (!post) return res.status(400).send({ message: "That category is unavailable." });
+  try {
+    // TAG TRACE: the post keeps its structural category; these rows attach up
+    // to three staff-approved descriptors without creating new categories.
+    post.tags = await setForumPostTags(post.post_id, tagIds);
+  } catch (error) {
+    console.error("Failed to attach tags to new forum post:", error);
+    post.tags = [];
+  }
   let savedMentions = [];
   try {
     savedMentions = await createForumMentions({

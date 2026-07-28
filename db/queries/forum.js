@@ -18,10 +18,46 @@ export async function getForumCategories() {
   return rows;
 }
 
-export async function getForumPosts({ categorySlug, search, viewerId } = {}) {
+export async function getForumTags({ includeInactive = false } = {}) {
+  const { rows } = await db.query(`
+    SELECT
+      t.*,
+      COUNT(pt.post_id)::INT AS post_count
+    FROM forum_tags t
+    LEFT JOIN forum_post_tags pt ON pt.tag_id = t.tag_id
+    ${includeInactive ? "" : "WHERE t.active = TRUE"}
+    GROUP BY t.tag_id
+    ORDER BY t.sort_order, t.name
+  `);
+  return rows;
+}
+
+export async function createForumTag({ name, slug, description, createdBy }) {
+  const { rows: [tag] } = await db.query(
+    `INSERT INTO forum_tags (name, slug, description, created_by)
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [name.trim(), slug, description?.trim() || null, createdBy]
+  );
+  return tag;
+}
+
+export async function updateForumTag(tagId, { name, slug, description, active }) {
+  const { rows: [tag] } = await db.query(
+    `UPDATE forum_tags
+     SET name = $2, slug = $3, description = $4, active = $5, updated_at = NOW()
+     WHERE tag_id = $1
+     RETURNING *`,
+    [tagId, name.trim(), slug, description?.trim() || null, active]
+  );
+  return tag;
+}
+
+export async function getForumPosts({ categorySlug, tagSlug, search, viewerId } = {}) {
   const values = [viewerId ?? null];
   let categoryFilter = "";
   let searchFilter = "";
+  let tagFilter = "";
 
   if (categorySlug) {
     values.push(categorySlug);
@@ -31,6 +67,18 @@ export async function getForumPosts({ categorySlug, search, viewerId } = {}) {
   if (search) {
     values.push(`%${search}%`);
     searchFilter = `AND (p.title ILIKE $${values.length} OR p.body ILIKE $${values.length})`;
+  }
+
+  if (tagSlug) {
+    values.push(tagSlug);
+    tagFilter = `AND EXISTS (
+      SELECT 1
+      FROM forum_post_tags filtered_pt
+      JOIN forum_tags filtered_tag ON filtered_tag.tag_id = filtered_pt.tag_id
+      WHERE filtered_pt.post_id = p.post_id
+        AND filtered_tag.slug = $${values.length}
+        AND filtered_tag.active = TRUE
+    )`;
   }
 
   const { rows } = await db.query(
@@ -49,6 +97,16 @@ export async function getForumPosts({ categorySlug, search, viewerId } = {}) {
         u.user_id AS author_id,
         u.username AS author_username,
         u.avatar_url AS author_avatar_url,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'tag_id', tag.tag_id,
+            'name', tag.name,
+            'slug', tag.slug
+          ) ORDER BY tag.sort_order, tag.name)
+          FROM forum_post_tags post_tag
+          JOIN forum_tags tag ON tag.tag_id = post_tag.tag_id
+          WHERE post_tag.post_id = p.post_id AND tag.active = TRUE
+        ), '[]'::jsonb) AS tags,
         COUNT(cm.comment_id)::INT AS comment_count,
         GREATEST(p.updated_at, COALESCE(MAX(cm.created_at), p.updated_at)) AS latest_activity_at,
         EXISTS(
@@ -112,6 +170,7 @@ export async function getForumPosts({ categorySlug, search, viewerId } = {}) {
         AND p.deleted_at IS NULL
         AND c.active = TRUE
         ${categoryFilter}
+        ${tagFilter}
         ${searchFilter}
       GROUP BY p.post_id, c.category_id, u.user_id
       ORDER BY p.pinned DESC, latest_activity_at DESC
@@ -132,6 +191,16 @@ export async function getForumPostById(postId, viewerId) {
         c.slug AS category_slug,
         u.username AS author_username,
         u.avatar_url AS author_avatar_url,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'tag_id', tag.tag_id,
+            'name', tag.name,
+            'slug', tag.slug
+          ) ORDER BY tag.sort_order, tag.name)
+          FROM forum_post_tags post_tag
+          JOIN forum_tags tag ON tag.tag_id = post_tag.tag_id
+          WHERE post_tag.post_id = p.post_id AND tag.active = TRUE
+        ), '[]'::jsonb) AS tags,
         editor.role_id AS content_edited_by_role_id,
         EXISTS(
           SELECT 1 FROM forum_content_flags flags
@@ -232,7 +301,7 @@ export async function getForumComments(postId, viewerId) {
   return rows;
 }
 
-export async function createForumPost({ categoryId, authorId, title, body }) {
+export async function createForumPost({ categoryId, authorId, title, body, canPostAnnouncements = false }) {
   const {
     rows: [post],
   } = await db.query(
@@ -240,12 +309,34 @@ export async function createForumPost({ categoryId, authorId, title, body }) {
       INSERT INTO posts (category_id, author_id, title, body)
       SELECT category_id, $2, $3, $4
       FROM forum_categories
-      WHERE category_id = $1 AND active = TRUE
+      WHERE category_id = $1
+        AND active = TRUE
+        AND (slug <> 'announcements' OR $5 = TRUE)
       RETURNING *
     `,
-    [categoryId, authorId, title.trim(), body.trim()]
+    [categoryId, authorId, title.trim(), body.trim(), canPostAnnouncements]
   );
   return post;
+}
+
+export async function setForumPostTags(postId, tagIds) {
+  if (!tagIds.length) return [];
+  const { rows } = await db.query(
+    `WITH inserted AS (
+       INSERT INTO forum_post_tags (post_id, tag_id)
+       SELECT $1, tag_id
+       FROM forum_tags
+       WHERE tag_id = ANY($2::INT[]) AND active = TRUE
+       ON CONFLICT DO NOTHING
+       RETURNING tag_id
+     )
+     SELECT t.tag_id, t.name, t.slug
+     FROM inserted i
+     JOIN forum_tags t ON t.tag_id = i.tag_id
+     ORDER BY t.sort_order, t.name`,
+    [postId, tagIds]
+  );
+  return rows;
 }
 
 export async function createForumComment({ postId, authorId, parentCommentId, body }) {

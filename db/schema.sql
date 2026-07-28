@@ -106,6 +106,20 @@ CREATE TABLE IF NOT EXISTS posts (
     ON DELETE CASCADE
 );
 
+-- Tags describe a conversation without splitting the community into separate
+-- spaces. Staff curate this list; members choose from active options.
+CREATE TABLE IF NOT EXISTS forum_tags (
+  tag_id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL CHECK (LENGTH(TRIM(name)) > 0),
+  slug TEXT NOT NULL UNIQUE CHECK (LENGTH(TRIM(slug)) > 0),
+  description TEXT,
+  sort_order INT NOT NULL DEFAULT 0,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 -- Existing development databases also receive the new column when schema.sql
 -- is rerun; CREATE TABLE IF NOT EXISTS alone cannot add later columns.
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS content_edited_at TIMESTAMP DEFAULT NULL;
@@ -124,6 +138,16 @@ BEGIN
       FOREIGN KEY (content_edited_by) REFERENCES users(user_id) ON DELETE SET NULL;
   END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS forum_post_tags (
+  post_id INT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
+  tag_id INT NOT NULL REFERENCES forum_tags(tag_id) ON DELETE CASCADE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (post_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forum_post_tags_tag_post
+  ON forum_post_tags (tag_id, post_id);
 
 DO $$
 BEGIN

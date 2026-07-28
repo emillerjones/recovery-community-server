@@ -44,6 +44,12 @@ async function seed() {
       (name, slug, description, sort_order)
     VALUES
       (
+        'Announcements',
+        'announcements',
+        'Official updates from community staff.',
+        0
+      ),
+      (
         'Introductions',
         'introductions',
         'Introduce yourself and say hello to the community.',
@@ -92,6 +98,16 @@ async function seed() {
         8
       )
     ON CONFLICT DO NOTHING;
+  `);
+
+  await db.query(`
+    INSERT INTO forum_tags (name, slug, description, sort_order)
+    VALUES
+      ('My Story', 'mystory', 'Personal experiences and recovery stories.', 1),
+      ('Question', 'question', 'Questions for the community.', 2),
+      ('Live Meetings', 'livemeetings', 'Live meetings, schedules, and discussion.', 3),
+      ('12 Steps', '12steps', 'Twelve-step experiences and discussion.', 4)
+    ON CONFLICT (slug) DO NOTHING
   `);
 
 

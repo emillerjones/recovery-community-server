@@ -19,6 +19,9 @@ import {
   createForumPost,
   flagForumComment,
   flagForumPost,
+  getForumPosts,
+  getForumTags,
+  setForumPostTags,
   softDeleteForumComment,
   softDeleteForumPost,
   updateForumComment,
@@ -56,6 +59,11 @@ try {
     "utf8"
   )).replace(/^BEGIN;\s*/i, "").replace(/\s*COMMIT;\s*$/i, "");
   await db.query(editMigration);
+  const tagMigration = (await fs.readFile(
+    new URL("../db/migrations/010_add_forum_tags.sql", import.meta.url),
+    "utf8"
+  )).replace(/^BEGIN;\s*/i, "").replace(/\s*COMMIT;\s*$/i, "");
+  await db.query(tagMigration);
   await db.query(`INSERT INTO user_roles (role_id, role_name) VALUES
     (1, 'owner'), (10, 'administrator'), (50, 'moderator'), (100, 'member'), (1000, 'system')`);
   const owner = await createUser("owner@example.com", "owner", "owner-password", 1);
@@ -179,6 +187,25 @@ try {
     categoryId: category.category_id, authorId: memberAuthor.user_id,
     title: "Member permanent post", body: "Original member wording.",
   });
+  const activeTags = await getForumTags();
+  const questionTag = activeTags.find((tag) => tag.slug === "question");
+  assert.ok(questionTag);
+  await setForumPostTags(memberEditPost.post_id, [questionTag.tag_id]);
+  const taggedPosts = await getForumPosts({ tagSlug: "question", viewerId: memberAuthor.user_id });
+  assert.equal(taggedPosts.some((post) => post.post_id === memberEditPost.post_id), true);
+  assert.equal(taggedPosts.find((post) => post.post_id === memberEditPost.post_id).tags[0].slug, "question");
+
+  const { rows: [announcementCategory] } = await db.query(
+    "SELECT category_id FROM forum_categories WHERE slug = 'announcements'"
+  );
+  assert.equal(await createForumPost({
+    categoryId: announcementCategory.category_id, authorId: memberAuthor.user_id,
+    title: "Member announcement attempt", body: "Members cannot publish here.",
+  }), undefined);
+  assert.ok(await createForumPost({
+    categoryId: announcementCategory.category_id, authorId: moderator.user_id,
+    title: "Staff announcement", body: "An official community update.", canPostAnnouncements: true,
+  }));
   assert.equal(await updateForumPost(
     memberEditPost.post_id, memberAuthor.user_id, false, false,
     { body: "Member attempted edit." }
