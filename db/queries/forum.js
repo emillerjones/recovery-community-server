@@ -102,7 +102,7 @@ export async function getForumPosts({
   }
 
   const orderBy = sort === "discussed"
-    ? "comment_count DESC, latest_activity_at DESC, p.post_id DESC"
+    ? "p.pinned DESC, comment_count DESC, latest_activity_at DESC, p.post_id DESC"
     : "p.pinned DESC, latest_activity_at DESC, p.post_id DESC";
   values.push(limit + 1, page * limit);
   const limitParameter = values.length - 1;
