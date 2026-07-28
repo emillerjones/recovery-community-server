@@ -7,7 +7,6 @@ import {
   createForumTag,
   getForumCategories,
   getForumComments,
-  getForumNotificationRecipient,
   getForumReactionTarget,
   getForumPostById,
   getForumPosts,
@@ -36,6 +35,7 @@ import {
 } from "#db/queries/forum";
 import {
   createNotification,
+  createForumParticipantNotifications,
   createOrGroupReactionNotification,
   createStaffFlagNotifications,
 } from "#db/queries/notifications";
@@ -298,28 +298,20 @@ router.post("/posts/:id/comments", async (req, res) => {
   notifyThread(postId, "new_comment", comment);
 
   try {
-    // TRACE STEP 2: Decide who should receive the notification.
-    // - A normal reply notifies the person who created the original post.
-    // - A nested reply notifies the person who wrote the parent comment.
-    const recipientId = await getForumNotificationRecipient(postId, parentCommentId);
+    // FACEBOOK-STYLE PARTICIPANT ALERT TRACE STEP 2: one query finds the OG
+    // poster, original-post reactors, and everyone who has commented anywhere
+    // in this conversation. It excludes the actor and deduplicates members.
+    const participantNotifications = await createForumParticipantNotifications({
+      actorId: req.user.user_id,
+      postId,
+      commentId: comment.comment_id,
+      activity: "comment",
+    });
 
-    // Do not create a notification when there is no recipient or when the
-    // member is replying to their own post/comment.
-    if (recipientId && recipientId !== req.user.user_id) {
-      // TRACE STEP 3: Save a permanent notification row in PostgreSQL.
-      // actorId is the member who replied; userId is the member receiving it.
-      const notification = await createNotification({
-        userId: recipientId,
-        actorId: req.user.user_id,
-        type: parentCommentId ? "reply_to_comment" : "reply_to_post",
-        postId,
-        commentId: comment.comment_id,
-      });
-
-      // TRACE STEP 4: Push that saved notification to the recipient's browser
-      // immediately through Socket.IO. The database row still exists if the
-      // recipient is offline and will be fetched when they return.
-      notifyUser(recipientId, "notification", notification);
+    // TRACE STEP 3: every returned row is already durable in PostgreSQL. Push
+    // it now too, so online participants see the same alert immediately.
+    for (const notification of participantNotifications) {
+      notifyUser(notification.user_id, "notification", notification);
     }
 
     const savedIds = new Set(savedMentions.map((mention) => mention.mentioned_user_id));
@@ -328,7 +320,8 @@ router.post("/posts/:id/comments", async (req, res) => {
       actorId: req.user.user_id,
       postId,
       commentId: comment.comment_id,
-      skipUserIds: recipientId ? [recipientId] : [],
+      // A participant who was also @mentioned already has the activity alert.
+      skipUserIds: participantNotifications.map((notification) => notification.user_id),
     });
   } catch (error) {
     // The reply is already saved. A notification failure should not make
@@ -456,11 +449,24 @@ router.delete("/posts/:id/save", async (req, res) => {
   res.send({ saved: false });
 });
 
-async function notifyReactionAuthor({ req, postId, commentId = null }) {
+async function notifyReactionRecipients({ req, postId, commentId = null }) {
   // REACTION TRACE STEP 6: A brand-new reaction reaches this helper after the
-  // database save. Find the author, create/update one grouped notification,
-  // and push it to that author's browser. Changes to an existing reaction and
-  // reactions on your own content deliberately skip this notification.
+  // database save. Changes to an existing reaction deliberately skip alerts.
+  // Reactions on the original post alert every existing participant. The new
+  // reactor is already part of that set after the save, but the query excludes
+  // the actor. Reactions on an individual reply remain private to its author.
+  if (!commentId) {
+    const notifications = await createForumParticipantNotifications({
+      actorId: req.user.user_id,
+      postId,
+      activity: "reaction",
+    });
+    for (const notification of notifications) {
+      notifyUser(notification.user_id, "notification", notification);
+    }
+    return;
+  }
+
   const target = await getForumReactionTarget({ postId, commentId });
   if (!target || target.author_id === req.user.user_id) return;
 
@@ -486,7 +492,7 @@ router.put("/posts/:id/reaction", async (req, res) => {
   // values identify the post, logged-in member, and selected reaction.
   const reaction = await setForumPostReaction(postId, req.user.user_id, reactionType);
   if (!reaction) return res.status(404).send({ message: "Post not found." });
-  try { if (reaction.was_new) await notifyReactionAuthor({ req, postId }); }
+  try { if (reaction.was_new) await notifyReactionRecipients({ req, postId }); }
   catch (error) { console.error("Failed to create post reaction notification:", error); }
   // Return to REACTION TRACE STEP 7A in client ForumThread.jsx.
   res.send({ reaction_type: reaction.reaction_type });
@@ -513,7 +519,7 @@ router.put("/posts/:id/comments/:commentId/reaction", async (req, res) => {
   // Continue at REACTION TRACE STEP 5B in db/queries/forum.js.
   const reaction = await setForumCommentReaction(commentId, req.user.user_id, reactionType);
   if (!reaction) return res.status(404).send({ message: "Reply not found." });
-  try { if (reaction.was_new) await notifyReactionAuthor({ req, postId: Number(req.params.id), commentId }); }
+  try { if (reaction.was_new) await notifyReactionRecipients({ req, postId: Number(req.params.id), commentId }); }
   catch (error) { console.error("Failed to create reply reaction notification:", error); }
   // Return to REACTION TRACE STEP 7B in client ForumThread.jsx.
   res.send({ reaction_type: reaction.reaction_type });

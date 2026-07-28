@@ -53,6 +53,49 @@ export async function createStaffFlagNotifications({ actorId, postId, commentId 
   return rows;
 }
 
+export async function createForumParticipantNotifications({ actorId, postId, commentId = null, activity }) {
+  // A participant is anyone who authored the post, reacted to the original
+  // post, or commented anywhere beneath it. UNION removes duplicates before
+  // the insert, even when one member belongs to all three groups.
+  const type = activity === "reaction"
+    ? "reaction_on_participated_post"
+    : "comment_on_participated_post";
+  const { rows } = await db.query(
+    `
+      WITH participant_ids AS (
+        SELECT author_id AS user_id FROM posts WHERE post_id = $2
+        UNION
+        SELECT user_id FROM forum_reactions WHERE post_id = $2
+        UNION
+        SELECT author_id AS user_id
+        FROM comments
+        WHERE post_id = $2 AND active = TRUE AND deleted_at IS NULL
+      ), eligible_recipients AS (
+        SELECT participant.user_id
+        FROM participant_ids participant
+        JOIN users recipient ON recipient.user_id = participant.user_id
+        WHERE participant.user_id <> $1
+          AND recipient.account_status = 'approved'
+          AND recipient.active = TRUE
+          AND recipient.deleted_at IS NULL
+          AND recipient.is_system = FALSE
+      ), inserted AS (
+        INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+        SELECT user_id, $1, $3, $2, $4
+        FROM eligible_recipients
+        RETURNING *
+      )
+      SELECT inserted.*, actor.username AS actor_username, p.title AS post_title
+      FROM inserted
+      JOIN users actor ON actor.user_id = inserted.actor_id
+      JOIN posts p ON p.post_id = inserted.post_id
+      ORDER BY inserted.notification_id
+    `,
+    [actorId, postId, type, commentId]
+  );
+  return rows;
+}
+
 export async function getNewPostNotifications(postId) {
   // NEW POST ALERT TRACE STEP 3: the database trigger has already inserted one
   // durable row per eligible member. Return those fresh rows with the display

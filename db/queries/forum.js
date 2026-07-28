@@ -356,20 +356,6 @@ export async function createForumComment({ postId, authorId, parentCommentId, bo
   return comment;
 }
 
-export async function getForumNotificationRecipient(postId, parentCommentId) {
-  if (parentCommentId) {
-    const {
-      rows: [comment],
-    } = await db.query(`SELECT author_id FROM comments WHERE comment_id = $1`, [parentCommentId]);
-    return comment?.author_id ?? null;
-  }
-
-  const {
-    rows: [post],
-  } = await db.query(`SELECT author_id FROM posts WHERE post_id = $1`, [postId]);
-  return post?.author_id ?? null;
-}
-
 export async function updateForumPostModeration(postId, { pinned, locked }) {
   const fields = [];
   const values = [];

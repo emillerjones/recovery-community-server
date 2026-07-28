@@ -21,6 +21,7 @@ import {
   flagForumPost,
   getForumPosts,
   getForumTags,
+  setForumPostReaction,
   setForumPostTags,
   softDeleteForumComment,
   softDeleteForumPost,
@@ -28,7 +29,10 @@ import {
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
-import { createStaffFlagNotifications } from "#db/queries/notifications";
+import {
+  createForumParticipantNotifications,
+  createStaffFlagNotifications,
+} from "#db/queries/notifications";
 import { createSecureToken, hashSecret } from "#utils/secureTokens";
 
 const schemaName = "codex_registration_integration";
@@ -201,6 +205,46 @@ try {
   const otherMember = await createUser("delete-other@example.com", "delete-other", "password-123", 100);
   const moderator = await createUser("delete-mod@example.com", "delete-mod", "password-123", 50);
   const administrator = await createUser("delete-admin@example.com", "delete-admin", "password-123", 10);
+
+  // Facebook-style conversation alerts go to the unique set of OG poster,
+  // original-post reactors, and commenters. The member causing the new event
+  // must never receive their own alert.
+  const participantPost = await createForumPost({
+    categoryId: category.category_id, authorId: owner.user_id,
+    title: "Participant alerts", body: "Everyone involved stays in the loop.",
+  });
+  await setForumPostReaction(participantPost.post_id, memberAuthor.user_id, "support");
+  await createForumComment({
+    postId: participantPost.post_id, authorId: otherMember.user_id,
+    parentCommentId: null, body: "Existing participant comment.",
+  });
+  const moderatorComment = await createForumComment({
+    postId: participantPost.post_id, authorId: moderator.user_id,
+    parentCommentId: null, body: "New activity that triggers alerts.",
+  });
+  const commentAlerts = await createForumParticipantNotifications({
+    actorId: moderator.user_id,
+    postId: participantPost.post_id,
+    commentId: moderatorComment.comment_id,
+    activity: "comment",
+  });
+  assert.deepEqual(
+    commentAlerts.map((alert) => alert.user_id).sort((a, b) => a - b),
+    [owner.user_id, memberAuthor.user_id, otherMember.user_id].sort((a, b) => a - b)
+  );
+  assert.ok(commentAlerts.every((alert) => alert.type === "comment_on_participated_post"));
+
+  await setForumPostReaction(participantPost.post_id, administrator.user_id, "care");
+  const reactionAlerts = await createForumParticipantNotifications({
+    actorId: administrator.user_id,
+    postId: participantPost.post_id,
+    activity: "reaction",
+  });
+  assert.deepEqual(
+    reactionAlerts.map((alert) => alert.user_id).sort((a, b) => a - b),
+    [owner.user_id, memberAuthor.user_id, otherMember.user_id, moderator.user_id].sort((a, b) => a - b)
+  );
+  assert.ok(reactionAlerts.every((alert) => alert.type === "reaction_on_participated_post"));
 
   // Edit permissions: members cannot edit even their own content; moderator
   // and admin may edit only their own; owner may edit anyone's. Locked posts
@@ -405,7 +449,7 @@ try {
   });
   assert.ok(await softDeleteForumPost(ownerPost.post_id, owner.user_id, true));
 
-  console.log("Integration test passed: registration, welcome alerts, staff flag alerts, protected system account, edit history, and recursive delete permissions.");
+  console.log("Integration test passed: registration, welcome alerts, participant alerts, staff flag alerts, protected system account, edit history, and recursive delete permissions.");
 } finally {
   await db.query("ROLLBACK");
   await db.end();
