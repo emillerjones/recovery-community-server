@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS posts (
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   content_edited_at TIMESTAMP DEFAULT NULL,
+  content_edited_by INT
+    REFERENCES users(user_id)
+    ON DELETE SET NULL,
 
   -- Set only on the one automatic welcome post created for this member.
   -- The unique value makes approval retries unable to create duplicates.
@@ -106,7 +109,21 @@ CREATE TABLE IF NOT EXISTS posts (
 -- Existing development databases also receive the new column when schema.sql
 -- is rerun; CREATE TABLE IF NOT EXISTS alone cannot add later columns.
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS content_edited_at TIMESTAMP DEFAULT NULL;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS content_edited_by INT;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS welcome_member_id INT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'posts_content_edited_by_fkey'
+      AND conrelid = 'posts'::regclass
+  ) THEN
+    ALTER TABLE posts
+      ADD CONSTRAINT posts_content_edited_by_fkey
+      FOREIGN KEY (content_edited_by) REFERENCES users(user_id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 DO $$
 BEGIN
@@ -177,12 +194,49 @@ CREATE TABLE IF NOT EXISTS comments (
 
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  content_edited_at TIMESTAMP DEFAULT NULL,
+  content_edited_by INT
+    REFERENCES users(user_id)
+    ON DELETE SET NULL,
 
   UNIQUE (comment_id, post_id),
 
   FOREIGN KEY (parent_comment_id, post_id)
     REFERENCES comments(comment_id, post_id)
 );
+
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS content_edited_at TIMESTAMP DEFAULT NULL;
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS content_edited_by INT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'comments_content_edited_by_fkey'
+      AND conrelid = 'comments'::regclass
+  ) THEN
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_content_edited_by_fkey
+      FOREIGN KEY (content_edited_by) REFERENCES users(user_id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- Like post revisions, comment revisions are private audit records. Members
+-- see only an edited label; no front-facing endpoint exposes previous wording.
+CREATE TABLE IF NOT EXISTS forum_comment_revisions (
+  revision_id SERIAL PRIMARY KEY,
+  comment_id INT NOT NULL
+    REFERENCES comments(comment_id)
+    ON DELETE CASCADE,
+  edited_by INT
+    REFERENCES users(user_id)
+    ON DELETE SET NULL,
+  previous_body TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_forum_comment_revisions_comment_created
+  ON forum_comment_revisions (comment_id, created_at DESC);
 
 
 

@@ -132,6 +132,7 @@ export async function getForumPostById(postId, viewerId) {
         c.slug AS category_slug,
         u.username AS author_username,
         u.avatar_url AS author_avatar_url,
+        editor.role_id AS content_edited_by_role_id,
         EXISTS(
           SELECT 1 FROM forum_content_flags flags
           WHERE flags.post_id = p.post_id
@@ -166,6 +167,7 @@ export async function getForumPostById(postId, viewerId) {
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
+      LEFT JOIN users editor ON editor.user_id = p.content_edited_by
       WHERE p.post_id = $1
         AND p.active = TRUE
         AND p.deleted_at IS NULL
@@ -186,6 +188,9 @@ export async function getForumComments(postId, viewerId) {
         cm.created_at,
         cm.updated_at,
         cm.deleted_at,
+        cm.content_edited_at,
+        cm.content_edited_by,
+        editor.role_id AS content_edited_by_role_id,
         CASE WHEN cm.deleted_at IS NULL THEN cm.body ELSE NULL END AS body,
         CASE WHEN cm.deleted_at IS NULL THEN u.username ELSE NULL END AS author_username,
         CASE WHEN cm.deleted_at IS NULL THEN u.avatar_url ELSE NULL END AS author_avatar_url,
@@ -218,6 +223,7 @@ export async function getForumComments(postId, viewerId) {
         ), '[]'::jsonb) AS mentions
       FROM comments cm
       JOIN users u ON u.user_id = cm.author_id
+      LEFT JOIN users editor ON editor.user_id = cm.content_edited_by
       WHERE cm.post_id = $1
       ORDER BY cm.created_at
     `,
@@ -317,7 +323,7 @@ export async function updateForumPostModeration(postId, { pinned, locked }) {
   return post;
 }
 
-export async function updateForumPost(postId, authorId, { title, body }) {
+export async function updateForumPost(postId, actorId, canEditOwn, canEditOthers, { title, body }) {
   const fields = [];
   const changeChecks = [];
   const values = [];
@@ -334,9 +340,11 @@ export async function updateForumPost(postId, authorId, { title, body }) {
   }
   if (!fields.length) return null;
 
-  values.push(postId, authorId);
-  const postIdParameter = values.length - 1;
-  const authorIdParameter = values.length;
+  values.push(postId, actorId, canEditOwn, canEditOthers);
+  const postIdParameter = values.length - 3;
+  const actorIdParameter = values.length - 2;
+  const canEditOwnParameter = values.length - 1;
+  const canEditOthersParameter = values.length;
   const {
     rows: [post],
   } = await db.query(
@@ -347,15 +355,18 @@ export async function updateForumPost(postId, authorId, { title, body }) {
         SELECT p.*
         FROM posts p
         WHERE p.post_id = $${postIdParameter}
-          AND p.author_id = $${authorIdParameter}
+          AND (
+            (p.author_id = $${actorIdParameter} AND $${canEditOwnParameter})
+            OR $${canEditOthersParameter}
+          )
           AND p.deleted_at IS NULL
-          AND p.locked = FALSE
         FOR UPDATE
       ),
       updated AS (
         UPDATE posts p
         SET ${fields.join(", ")},
             content_edited_at = NOW(),
+            content_edited_by = $${actorIdParameter},
             updated_at = NOW()
         FROM previous
         WHERE p.post_id = previous.post_id
@@ -365,18 +376,62 @@ export async function updateForumPost(postId, authorId, { title, body }) {
       revision AS (
         INSERT INTO forum_post_revisions
           (post_id, edited_by, previous_title, previous_body)
-        SELECT previous.post_id, $${authorIdParameter}, previous.title, previous.body
+        SELECT previous.post_id, $${actorIdParameter}, previous.title, previous.body
         FROM previous
         JOIN updated ON updated.post_id = previous.post_id
         RETURNING revision_id
       )
-      SELECT updated.*
+      SELECT updated.*, editor.role_id AS content_edited_by_role_id
       FROM updated
       CROSS JOIN revision
+      LEFT JOIN users editor ON editor.user_id = updated.content_edited_by
     `,
     values
   );
   return post;
+}
+
+export async function updateForumComment(postId, commentId, actorId, canEditOwn, canEditOthers, body) {
+  const { rows: [comment] } = await db.query(
+    `
+      -- COMMENT EDIT TRACE STEP 4: lock the existing reply, update it, and
+      -- preserve the old wording + real editor in one atomic SQL statement.
+      WITH previous AS MATERIALIZED (
+        SELECT cm.*
+        FROM comments cm
+        WHERE cm.post_id = $1
+          AND cm.comment_id = $2
+          AND ((cm.author_id = $3 AND $4) OR $5)
+          AND cm.deleted_at IS NULL
+        FOR UPDATE
+      ), updated AS (
+        UPDATE comments cm
+        SET body = $6,
+            content_edited_at = NOW(),
+            content_edited_by = $3,
+            updated_at = NOW()
+        FROM previous
+        WHERE cm.comment_id = previous.comment_id
+          AND cm.body IS DISTINCT FROM $6
+        RETURNING cm.*
+      ), revision AS (
+        INSERT INTO forum_comment_revisions (comment_id, edited_by, previous_body)
+        SELECT previous.comment_id, $3, previous.body
+        FROM previous
+        JOIN updated ON updated.comment_id = previous.comment_id
+        RETURNING revision_id
+      )
+      SELECT updated.*, u.username AS author_username,
+        u.avatar_url AS author_avatar_url,
+        editor.role_id AS content_edited_by_role_id
+      FROM updated
+      CROSS JOIN revision
+      JOIN users u ON u.user_id = updated.author_id
+      LEFT JOIN users editor ON editor.user_id = updated.content_edited_by
+    `,
+    [postId, commentId, actorId, canEditOwn, canEditOthers, body.trim()]
+  );
+  return comment;
 }
 
 export async function softDeleteForumPost(postId, actorId, canDeleteOthers = false) {
@@ -398,13 +453,9 @@ export async function softDeleteForumPost(postId, actorId, canDeleteOthers = fal
           AND deleted_at IS NULL
         RETURNING comment_id
       )
-      SELECT deleted_post.*, COUNT(deleted_comments.comment_id)::INT AS deleted_comment_count
+      SELECT deleted_post.*,
+        (SELECT COUNT(*)::INT FROM deleted_comments) AS deleted_comment_count
       FROM deleted_post
-      LEFT JOIN deleted_comments ON TRUE
-      GROUP BY deleted_post.post_id, deleted_post.category_id, deleted_post.author_id,
-        deleted_post.title, deleted_post.body, deleted_post.pinned, deleted_post.locked,
-        deleted_post.active, deleted_post.deleted_at, deleted_post.created_at,
-        deleted_post.updated_at, deleted_post.content_edited_at, deleted_post.welcome_member_id
     `,
     [postId, actorId, canDeleteOthers]
   );

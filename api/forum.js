@@ -26,6 +26,7 @@ import {
   removeForumCommentReaction,
   removeForumPostReaction,
   unsaveForumPost,
+  updateForumComment,
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
@@ -280,11 +281,48 @@ router.patch("/posts/:id", async (req, res) => {
     return res.status(400).send({ message: "Nothing to update." });
   }
 
+  // Members publish permanently. Moderator/admin may correct only their own
+  // post; owner is the sole role allowed to edit another person's wording.
+  const canEditOwn = req.user.role_id <= 50;
+  if (!canEditOwn) {
+    return res.status(403).send({ message: "Published posts cannot be edited by members." });
+  }
+  const canEditOthers = req.user.role_id === 1;
+
   // EDIT HISTORY TRACE STEP 3: the query snapshots the current wording into
-  // the private revision table before applying this author's changes.
-  const post = await updateForumPost(postId, req.user.user_id, { title, body });
-  if (!post) return res.status(404).send({ message: "Post not found, locked, or not yours to edit." });
+  // the private revision table before applying this authorized staff edit.
+  const post = await updateForumPost(postId, req.user.user_id, canEditOwn, canEditOthers, { title, body });
+  if (!post) return res.status(404).send({ message: "Post not found, unchanged, or you do not have permission to edit it." });
   res.send(post);
+});
+
+router.patch("/posts/:id/comments/:commentId", async (req, res) => {
+  const postId = Number(req.params.id);
+  const commentId = Number(req.params.commentId);
+  const body = req.body.body?.trim();
+
+  if (!Number.isInteger(postId) || !Number.isInteger(commentId) || !body) {
+    return res.status(400).send({ message: "A reply is required." });
+  }
+  const canEditOwn = req.user.role_id <= 50;
+  if (!canEditOwn) {
+    return res.status(403).send({ message: "Published replies cannot be edited by members." });
+  }
+
+  // COMMENT EDIT TRACE STEP 3: moderator/admin may edit only their own reply;
+  // owner may edit anyone's. Continue in db/queries/forum.js.
+  const comment = await updateForumComment(
+    postId,
+    commentId,
+    req.user.user_id,
+    canEditOwn,
+    req.user.role_id === 1,
+    body
+  );
+  if (!comment) {
+    return res.status(404).send({ message: "Reply not found, unchanged, or you do not have permission to edit it." });
+  }
+  res.send(comment);
 });
 
 router.delete("/posts/:id", async (req, res) => {

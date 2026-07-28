@@ -19,6 +19,7 @@ import {
   createForumPost,
   softDeleteForumComment,
   softDeleteForumPost,
+  updateForumComment,
   updateForumPost,
   updateForumPostModeration,
 } from "#db/queries/forum";
@@ -44,6 +45,14 @@ try {
   await db.query(`CREATE SCHEMA ${schemaName}`);
   await db.query(`SET LOCAL search_path TO ${schemaName}`);
   await db.query(await fs.readFile(new URL("../db/schema.sql", import.meta.url), "utf8"));
+  // Apply the deployment migration over the already-current schema too. This
+  // verifies its syntax and idempotency without committing anything outside
+  // this test's rollback transaction.
+  const editMigration = (await fs.readFile(
+    new URL("../db/migrations/009_add_forum_comment_edits.sql", import.meta.url),
+    "utf8"
+  )).replace(/^BEGIN;\s*/i, "").replace(/\s*COMMIT;\s*$/i, "");
+  await db.query(editMigration);
   await db.query(`INSERT INTO user_roles (role_id, role_name) VALUES
     (1, 'owner'), (10, 'administrator'), (50, 'moderator'), (100, 'member'), (1000, 'system')`);
   const owner = await createUser("owner@example.com", "owner", "owner-password", 1);
@@ -82,7 +91,7 @@ try {
     [originalPost.post_id]
   );
   assert.equal(originalPostAlertCount, 1);
-  const editedPost = await updateForumPost(originalPost.post_id, owner.user_id, {
+  const editedPost = await updateForumPost(originalPost.post_id, owner.user_id, true, true, {
     title: "Edited title", body: "Edited body",
   });
   assert.ok(editedPost.content_edited_at);
@@ -160,6 +169,75 @@ try {
   const moderator = await createUser("delete-mod@example.com", "delete-mod", "password-123", 50);
   const administrator = await createUser("delete-admin@example.com", "delete-admin", "password-123", 10);
 
+  // Edit permissions: members cannot edit even their own content; moderator
+  // and admin may edit only their own; owner may edit anyone's. Locked posts
+  // remain editable by the staff member who authored them.
+  const memberEditPost = await createForumPost({
+    categoryId: category.category_id, authorId: memberAuthor.user_id,
+    title: "Member permanent post", body: "Original member wording.",
+  });
+  assert.equal(await updateForumPost(
+    memberEditPost.post_id, memberAuthor.user_id, false, false,
+    { body: "Member attempted edit." }
+  ), undefined);
+  assert.equal(await updateForumPost(
+    memberEditPost.post_id, administrator.user_id, true, false,
+    { body: "Administrator attempted another member edit." }
+  ), undefined);
+
+  const moderatorEditPost = await createForumPost({
+    categoryId: category.category_id, authorId: moderator.user_id,
+    title: "Moderator post", body: "Original moderator wording.",
+  });
+  await updateForumPostModeration(moderatorEditPost.post_id, { locked: true });
+  assert.ok(await updateForumPost(
+    moderatorEditPost.post_id, moderator.user_id, true, false,
+    { body: "Corrected moderator wording." }
+  ));
+  assert.equal(await updateForumPost(
+    memberEditPost.post_id, moderator.user_id, true, false,
+    { body: "Moderator attempted another member edit." }
+  ), undefined);
+
+  const editableComment = await createForumComment({
+    postId: memberEditPost.post_id, authorId: administrator.user_id,
+    parentCommentId: null, body: "Original administrator reply",
+  });
+  const memberPermanentComment = await createForumComment({
+    postId: memberEditPost.post_id, authorId: memberAuthor.user_id,
+    parentCommentId: null, body: "Permanent member reply",
+  });
+  assert.equal(await updateForumComment(
+    memberEditPost.post_id, memberPermanentComment.comment_id,
+    memberAuthor.user_id, false, false, "Member attempted reply edit"
+  ), undefined);
+  assert.ok(await updateForumComment(
+    memberEditPost.post_id, editableComment.comment_id,
+    administrator.user_id, true, false, "Corrected administrator reply"
+  ));
+  assert.equal(await updateForumComment(
+    memberEditPost.post_id, editableComment.comment_id,
+    moderator.user_id, true, false, "Moderator attempted administrator edit"
+  ), undefined);
+
+  const ownerEditedPost = await updateForumPost(
+    memberEditPost.post_id, owner.user_id, true, true,
+    { body: "Owner-corrected member wording." }
+  );
+  assert.equal(ownerEditedPost.content_edited_by, owner.user_id);
+  assert.equal(ownerEditedPost.content_edited_by_role_id, 1);
+  const ownerEditedComment = await updateForumComment(
+    memberEditPost.post_id, editableComment.comment_id,
+    owner.user_id, true, true, "Owner-corrected administrator reply"
+  );
+  assert.equal(ownerEditedComment.content_edited_by, owner.user_id);
+  assert.equal(ownerEditedComment.content_edited_by_role_id, 1);
+  const { rows: [{ count: commentRevisionCount }] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM forum_comment_revisions WHERE comment_id = $1",
+    [editableComment.comment_id]
+  );
+  assert.equal(commentRevisionCount, 2);
+
   const branchPost = await createForumPost({
     categoryId: category.category_id, authorId: memberAuthor.user_id,
     title: "Nested deletion", body: "Testing a complete reply branch.",
@@ -215,7 +293,7 @@ try {
   });
   assert.ok(await softDeleteForumPost(ownerPost.post_id, owner.user_id, true));
 
-  console.log("Integration test passed: registration, welcome alerts, protected system account, and recursive delete permissions.");
+  console.log("Integration test passed: registration, welcome alerts, protected system account, edit history, and recursive delete permissions.");
 } finally {
   await db.query("ROLLBACK");
   await db.end();
