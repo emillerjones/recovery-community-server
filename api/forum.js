@@ -144,9 +144,11 @@ router.patch("/tags/:id", async (req, res) => {
 });
 
 router.get("/posts", async (req, res) => {
+  const tagSlugs = String(req.query.tags || req.query.tag || "")
+    .split(",").map((slug) => slug.trim()).filter(Boolean).slice(0, 10);
   res.send(await getForumPosts({
     categorySlug: req.query.category,
-    tagSlug: req.query.tag,
+    tagSlugs,
     search: req.query.search,
     viewerId: req.user.user_id,
   }));

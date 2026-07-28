@@ -191,9 +191,21 @@ try {
   const questionTag = activeTags.find((tag) => tag.slug === "question");
   assert.ok(questionTag);
   await setForumPostTags(memberEditPost.post_id, [questionTag.tag_id]);
-  const taggedPosts = await getForumPosts({ tagSlug: "question", viewerId: memberAuthor.user_id });
+  const taggedPosts = await getForumPosts({ tagSlugs: ["question"], viewerId: memberAuthor.user_id });
   assert.equal(taggedPosts.some((post) => post.post_id === memberEditPost.post_id), true);
   assert.equal(taggedPosts.find((post) => post.post_id === memberEditPost.post_id).tags[0].slug, "question");
+
+  const stepsTag = activeTags.find((tag) => tag.slug === "12steps");
+  const stepsPost = await createForumPost({
+    categoryId: category.category_id, authorId: otherMember.user_id,
+    title: "A twelve-step question", body: "Looking for shared experience.",
+  });
+  await setForumPostTags(stepsPost.post_id, [stepsTag.tag_id]);
+  const eitherTagPosts = await getForumPosts({
+    tagSlugs: ["question", "12steps"], viewerId: memberAuthor.user_id,
+  });
+  assert.equal(eitherTagPosts.some((post) => post.post_id === memberEditPost.post_id), true);
+  assert.equal(eitherTagPosts.some((post) => post.post_id === stepsPost.post_id), true);
 
   const { rows: [announcementCategory] } = await db.query(
     "SELECT category_id FROM forum_categories WHERE slug = 'announcements'"

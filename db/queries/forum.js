@@ -53,7 +53,7 @@ export async function updateForumTag(tagId, { name, slug, description, active })
   return tag;
 }
 
-export async function getForumPosts({ categorySlug, tagSlug, search, viewerId } = {}) {
+export async function getForumPosts({ categorySlug, tagSlugs = [], search, viewerId } = {}) {
   const values = [viewerId ?? null];
   let categoryFilter = "";
   let searchFilter = "";
@@ -69,14 +69,14 @@ export async function getForumPosts({ categorySlug, tagSlug, search, viewerId } 
     searchFilter = `AND (p.title ILIKE $${values.length} OR p.body ILIKE $${values.length})`;
   }
 
-  if (tagSlug) {
-    values.push(tagSlug);
+  if (tagSlugs.length) {
+    values.push(tagSlugs);
     tagFilter = `AND EXISTS (
       SELECT 1
       FROM forum_post_tags filtered_pt
       JOIN forum_tags filtered_tag ON filtered_tag.tag_id = filtered_pt.tag_id
       WHERE filtered_pt.post_id = p.post_id
-        AND filtered_tag.slug = $${values.length}
+        AND filtered_tag.slug = ANY($${values.length}::TEXT[])
         AND filtered_tag.active = TRUE
     )`;
   }
