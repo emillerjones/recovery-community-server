@@ -32,6 +32,7 @@ import {
 import { createNotification, createOrGroupReactionNotification } from "#db/queries/notifications";
 import { getActiveMentionUsers } from "#db/queries/users";
 import { notifyThread, notifyUser } from "#utils/socket";
+import { broadcastNewPostAlerts } from "#utils/newPostAlerts";
 
 const router = express.Router();
 const REACTION_TYPES = new Set([
@@ -160,6 +161,15 @@ router.post("/posts", async (req, res) => {
     });
   } catch (error) {
     console.error("Failed to create new-post mention notification:", error);
+  }
+  try {
+    // NEW POST ALERT TRACE STEP 2: inserting the post fired the database trigger
+    // that stored an alert for every member; now push those rows to online users.
+    await broadcastNewPostAlerts(post.post_id);
+  } catch (error) {
+    // The alerts are already durable in PostgreSQL. A socket failure must not
+    // make the browser retry and accidentally create a second forum post.
+    console.error("Failed to broadcast new-post notifications:", error);
   }
   res.status(201).send(post);
 });

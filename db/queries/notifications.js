@@ -23,6 +23,24 @@ export async function createNotification({ userId, actorId, type, postId, commen
   return notification;
 }
 
+export async function getNewPostNotifications(postId) {
+  // NEW POST ALERT TRACE STEP 3: the database trigger has already inserted one
+  // durable row per eligible member. Return those fresh rows with the display
+  // information the notification bell expects for its real-time update.
+  const { rows } = await db.query(
+    `
+      SELECT n.*, actor.username AS actor_username, p.title AS post_title
+      FROM notifications n
+      JOIN users actor ON actor.user_id = n.actor_id
+      JOIN posts p ON p.post_id = n.post_id
+      WHERE n.post_id = $1 AND n.type = 'new_forum_post'
+      ORDER BY n.notification_id
+    `,
+    [postId]
+  );
+  return rows;
+}
+
 export async function getNotifications(userId, limit = 30) {
   const { rows } = await db.query(
     `

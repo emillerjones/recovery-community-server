@@ -6,6 +6,7 @@ import {
 } from "#db/queries/admissions";
 import { clientUrl, sendEmail } from "#utils/email";
 import { createSecureToken, hashSecret } from "#utils/secureTokens";
+import { broadcastMemberWelcomeAlerts } from "#utils/newPostAlerts";
 
 const router = express.Router();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -31,6 +32,12 @@ router.patch("/applications/:id", async (req, res) => {
   const reason = typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 1000) : "";
   const user = await reviewApplication(Number(req.params.id), req.user.user_id, decision, reason);
   if (!user) return res.status(409).send({ message: "This application is no longer pending." });
+
+  if (user.account_status === "approved") {
+    // WELCOME POST TRACE STEP 3C: standard applications become approved here.
+    try { await broadcastMemberWelcomeAlerts(user.user_id); }
+    catch (error) { console.error("Approved-member welcome alert broadcast failed:", error); }
+  }
 
   try {
     await sendEmail({

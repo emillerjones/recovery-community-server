@@ -6,6 +6,7 @@ export async function getUsers() {
     SELECT * 
     FROM users
     WHERE users.deleted_at IS NULL
+      AND users.is_system = FALSE
   `;
   const { rows: users } = await db.query(sql);
   return users;
@@ -43,6 +44,7 @@ export async function getUserByUsername(username) {
     SELECT *
     FROM users
     WHERE username = $1
+      AND is_system = FALSE
       AND account_status = 'approved'
       AND active = TRUE
       AND deleted_at IS NULL
@@ -59,6 +61,7 @@ export async function searchActiveUsersForMention(search, excludeUserId, limit =
       SELECT user_id, username, avatar_url
       FROM users
       WHERE active = TRUE
+        AND is_system = FALSE
         AND account_status = 'approved'
         AND deleted_at IS NULL
         AND user_id <> $2
@@ -80,6 +83,7 @@ export async function getActiveMentionUsers(userIds) {
       SELECT user_id, username
       FROM users
       WHERE user_id = ANY($1::INT[])
+        AND is_system = FALSE
         AND active = TRUE
         AND account_status = 'approved'
         AND deleted_at IS NULL
@@ -93,7 +97,9 @@ export async function getUserByEmailAndPassword(email, password) {
   const sql = `
     SELECT *
     FROM users
-    WHERE email = $1 AND users.deleted_at IS NULL
+    WHERE email = $1
+      AND users.is_system = FALSE
+      AND users.deleted_at IS NULL
   `;
 
   const {

@@ -5,6 +5,7 @@ import {
 } from "#db/queries/registration";
 import { createSecureToken, hashSecret } from "#utils/secureTokens";
 import { clientUrl, sendEmail } from "#utils/email";
+import { broadcastMemberWelcomeAlerts } from "#utils/newPostAlerts";
 
 const router = express.Router();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -85,6 +86,13 @@ router.post("/register", registrationLimiter, async (req, res) => {
     });
     if (!user) return res.status(400).send({ message: "That invitation or shared code is invalid, expired, or already used." });
 
+    if (user.account_status === "approved") {
+      // WELCOME POST TRACE STEP 3A: personal invites approve during signup. The
+      // database already created the one welcome post in that same transaction.
+      try { await broadcastMemberWelcomeAlerts(user.user_id); }
+      catch (error) { console.error("Personal-invite welcome alert broadcast failed:", error); }
+    }
+
     if (admissionMethod !== "personal_invite") {
       try {
         // REGISTRATION TRACE STEP 3: standard and shared-code signups still
@@ -119,6 +127,12 @@ router.post("/verify-email", async (req, res) => {
   if (!token) return res.status(400).send({ message: "A verification token is required." });
   const user = await verifyEmail(hashSecret(token));
   if (!user) return res.status(400).send({ message: "This verification link is invalid, expired, or already used." });
+
+  if (user.account_status === "approved") {
+    // WELCOME POST TRACE STEP 3B: shared-code approval happens on verification.
+    try { await broadcastMemberWelcomeAlerts(user.user_id); }
+    catch (error) { console.error("Shared-code welcome alert broadcast failed:", error); }
+  }
 
   if (user.account_status === "pending" && process.env.CONTACT_TO) {
     try {

@@ -201,6 +201,9 @@ router.patch("/:id/role", requireBody(["role_id"]), async (req, res) => {
   if (!targetUser) {
     return res.status(404).send("User not found.");
   }
+  if (targetUser.is_system) {
+    return res.status(403).send("The protected system account cannot be changed.");
+  }
   if (targetUser.role_id === OWNER_ROLE_ID) {
     return res.status(403).send("The owner role cannot be changed.");
   }
@@ -219,6 +222,9 @@ router.patch("/:id/active", requireBody(["active"]), async (req, res) => {
   const targetUser = await getUserById(targetUserId);
   if (!targetUser) {
     return res.status(404).send("User not found.");
+  }
+  if (targetUser.is_system) {
+    return res.status(403).send("The protected system account cannot be changed.");
   }
 
   // Same hierarchy rule as role changes: you can only act on users
@@ -265,6 +271,10 @@ router.delete("/:id", async (req, res) => {
   const targetUser = await getUserById(targetUserId);
   if (!targetUser) {
     return res.status(404).send("User not found.");
+  }
+
+  if (targetUser.is_system) {
+    return res.status(403).send("The protected system account cannot be deleted.");
   }
 
   if (targetUser.role_id <= actingUser.role_id) {

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import db from "#db/client";
-import { createUser, hardDeleteTestUser, updateOwnProfile } from "#db/queries/users";
+import {
+  createUser,
+  getUserByEmailAndPassword,
+  getUserByUsername,
+  getUsers,
+  hardDeleteTestUser,
+  searchActiveUsersForMention,
+  updateOwnProfile,
+} from "#db/queries/users";
 import { createRegistration, verifyEmail } from "#db/queries/registration";
 import {
   createPersonalInvite, createSharedCode, reviewApplication,
@@ -30,8 +38,21 @@ try {
   await db.query(`SET LOCAL search_path TO ${schemaName}`);
   await db.query(await fs.readFile(new URL("../db/schema.sql", import.meta.url), "utf8"));
   await db.query(`INSERT INTO user_roles (role_id, role_name) VALUES
-    (1, 'owner'), (10, 'administrator'), (50, 'moderator'), (100, 'member')`);
+    (1, 'owner'), (10, 'administrator'), (50, 'moderator'), (100, 'member'), (1000, 'system')`);
   const owner = await createUser("owner@example.com", "owner", "owner-password", 1);
+
+  // The automated-content author exists as a real foreign-key-safe user, but
+  // every human-member discovery and login path must pretend it is not there.
+  const { rows: [systemUser] } = await db.query(`
+    INSERT INTO users (role_id, email, password, username, is_system, account_status, email_verified_at)
+    VALUES (1000, 'system@example.invalid', 'not-a-usable-password', 'Recovery Community', TRUE, 'approved', NOW())
+    RETURNING user_id
+  `);
+  assert.equal((await getUsers()).some((user) => user.user_id === systemUser.user_id), false);
+  assert.equal(await getUserByUsername("Recovery Community"), undefined);
+  assert.equal(await getUserByEmailAndPassword("system@example.invalid", "not-a-usable-password"), null);
+  assert.equal((await searchActiveUsersForMention("Recovery", owner.user_id)).length, 0);
+
   const completedProfile = await updateOwnProfile(owner.user_id, {
     bio: "Community founder", phoneNumber: "555-0100",
     dateOfBirth: "1980-01-02", gender: "Woman", avatarUrl: "preset:Butterfly:lavender",
@@ -43,12 +64,17 @@ try {
   // Editing content stores the previous wording privately and sets the public
   // edited timestamp. Pin/lock moderation must not create a revision.
   const { rows: [category] } = await db.query(
-    "INSERT INTO forum_categories (name, slug) VALUES ('Test', 'test') RETURNING category_id"
+    "INSERT INTO forum_categories (name, slug) VALUES ('Introductions', 'introductions') RETURNING category_id"
   );
   const { rows: [originalPost] } = await db.query(
     "INSERT INTO posts (category_id, author_id, title, body) VALUES ($1, $2, 'Original title', 'Original body') RETURNING *",
     [category.category_id, owner.user_id]
   );
+  const { rows: [{ count: originalPostAlertCount }] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM notifications WHERE post_id = $1 AND type = 'new_forum_post'",
+    [originalPost.post_id]
+  );
+  assert.equal(originalPostAlertCount, 1);
   const editedPost = await updateForumPost(originalPost.post_id, owner.user_id, {
     title: "Edited title", body: "Edited body",
   });
@@ -74,7 +100,9 @@ try {
     "SELECT application_id FROM membership_applications WHERE user_id = $1", [standard.user_id]
   );
   assert.equal((await reviewApplication(pendingApplication.application_id, owner.user_id, "approved", "")).account_status, "approved");
+  await assertWelcomePost(standard.user_id, standard.username, systemUser.user_id, 2);
   assert.equal((await hardDeleteTestUser(standard.user_id)).email, standard.email);
+  assert.equal((await db.query("SELECT COUNT(*)::INT AS count FROM posts WHERE welcome_member_id = $1", [standard.user_id])).rows[0].count, 0);
 
   // Flow 2: a private, one-use invitation bypasses manual review after verification.
   const inviteSecret = createSecureToken();
@@ -88,6 +116,7 @@ try {
     tokenHash: invitedVerification.tokenHash, sourceHash: inviteSecret.tokenHash,
   }));
   assert.equal(invited.account_status, "approved");
+  await assertWelcomePost(invited.user_id, invited.username, systemUser.user_id, 2);
   const { rows: [invitedTokenCount] } = await db.query(
     "SELECT COUNT(*)::INT AS count FROM email_verification_tokens WHERE user_id = $1", [invited.user_id]
   );
@@ -107,15 +136,54 @@ try {
     email: "coded@example.com", username: "coded", admissionMethod: "shared_code",
     tokenHash: codeVerification.tokenHash, sourceHash: hashSecret(readableCode),
   }));
-  assert.equal((await verifyEmail(codeVerification.tokenHash)).account_status, "approved");
+  const approvedCodedUser = await verifyEmail(codeVerification.tokenHash);
+  assert.equal(approvedCodedUser.account_status, "approved");
+  await assertWelcomePost(approvedCodedUser.user_id, approvedCodedUser.username, systemUser.user_id, 2);
   const { rows: [code] } = await db.query("SELECT use_count FROM shared_invite_codes");
   assert.equal(code.use_count, 1);
   assert.equal((await hardDeleteTestUser((await db.query("SELECT user_id FROM users WHERE email = 'coded@example.com'")).rows[0].user_id)).email, "coded@example.com");
   const { rows: [restoredCode] } = await db.query("SELECT use_count FROM shared_invite_codes");
   assert.equal(restoredCode.use_count, 0);
 
-  console.log("Registration integration test passed: all three flows and test-account hard deletion.");
+  console.log("Registration integration test passed: system protection, all three welcome-post flows, all-member alerts, and test-account cleanup.");
 } finally {
   await db.query("ROLLBACK");
   await db.end();
+}
+
+async function assertWelcomePost(memberId, username, systemUserId, expectedAlertCount) {
+  const { rows: [welcome] } = await db.query(
+    `
+      SELECT p.*, c.slug AS category_slug
+      FROM posts p
+      JOIN forum_categories c ON c.category_id = p.category_id
+      WHERE p.welcome_member_id = $1
+    `,
+    [memberId]
+  );
+  assert.equal(welcome.author_id, systemUserId);
+  assert.equal(welcome.category_slug, "introductions");
+  assert.equal(welcome.title, `Welcome, ${username}!`);
+  assert.match(welcome.body, new RegExp(`@${username}`));
+
+  const { rows: [{ count: mentionCount }] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM forum_mentions WHERE post_id = $1 AND mentioned_user_id = $2",
+    [welcome.post_id, memberId]
+  );
+  assert.equal(mentionCount, 1);
+
+  const { rows: [{ count: alertCount }] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM notifications WHERE post_id = $1 AND type = 'new_forum_post'",
+    [welcome.post_id]
+  );
+  assert.equal(alertCount, expectedAlertCount);
+
+  // Re-saving an already-approved status fires the database trigger but must
+  // not create a second automatic post or a second wave of notifications.
+  await db.query("UPDATE users SET account_status = 'approved' WHERE user_id = $1", [memberId]);
+  const { rows: [{ count: welcomeCount }] } = await db.query(
+    "SELECT COUNT(*)::INT AS count FROM posts WHERE welcome_member_id = $1",
+    [memberId]
+  );
+  assert.equal(welcomeCount, 1);
 }

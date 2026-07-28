@@ -13,9 +13,14 @@ async function seed() {
       (1, 'owner'),
       (10, 'administrator'),
       (50, 'moderator'),
-      (100, 'member')
+      (100, 'member'),
+      (1000, 'system')
     ON CONFLICT DO NOTHING
   `);
+
+  // This protected account will author automated welcome posts. It has no
+  // usable password and is excluded from login, member search, and admin lists.
+  await createSystemUserIfMissing();
 
   //create admins
   await createUserIfMissing("evan@gmail.com", "EMJ username", "123", 1);
@@ -24,13 +29,13 @@ async function seed() {
 
 
   //create regular users
-  for (let i = 1; i <= 10; i++) {
-    await createUserIfMissing(
-      "email" + i + "@gmail.com",
-      "Username" + i,
-      "Password" + i
-    );
-  }
+  // for (let i = 1; i <= 10; i++) {
+  //   await createUserIfMissing(
+  //     "email" + i + "@gmail.com",
+  //     "Username" + i,
+  //     "Password" + i
+  //   );
+  // }
 
 
 //seed categories
@@ -104,6 +109,29 @@ async function createUserIfMissing(email, username, password, roleId = 100) {
   if (rowCount === 0) {
     await createUser(email, username, password, roleId);
   }
+}
+
+async function createSystemUserIfMissing() {
+  await db.query(
+    `
+      INSERT INTO users (
+        role_id, email, password, username, is_system,
+        account_status, email_verified_at, avatar_url, notes
+      )
+      SELECT
+        1000,
+        'system@recovery-community.internal',
+        '$2b$12$E4ZRwlrYJsDDh.Lnap31IeeH/NKIKfmOBJeDVTK1yrq/F.Cwy08O2',
+        'Recovery Community',
+        TRUE,
+        'approved',
+        NOW(),
+        'preset:UsersThree:forest',
+        'Protected system account for automated community content.'
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_system = TRUE)
+      ON CONFLICT DO NOTHING
+    `
+  );
 }
 
 

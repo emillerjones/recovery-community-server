@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS users (
   password TEXT NOT NULL,
   username TEXT UNIQUE, 
 
+  -- System accounts author automatic community content but are not people:
+  -- they cannot log in and stay out of member searches and administration.
+  is_system BOOLEAN NOT NULL DEFAULT FALSE,
+
   -- Existing members are approved by default. The public registration query
   -- explicitly creates new accounts as unverified until they use their email link.
   account_status TEXT NOT NULL DEFAULT 'approved'
@@ -30,6 +34,15 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMP DEFAULT NOW(),
   last_seen_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Rerunning schema.sql upgrades an existing users table too; CREATE TABLE IF
+-- NOT EXISTS only supplies is_system when the table is brand new.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_system_account
+  ON users (is_system)
+  WHERE is_system = TRUE;
 
 
 
@@ -81,12 +94,40 @@ CREATE TABLE IF NOT EXISTS posts (
 
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  content_edited_at TIMESTAMP DEFAULT NULL
+  content_edited_at TIMESTAMP DEFAULT NULL,
+
+  -- Set only on the one automatic welcome post created for this member.
+  -- The unique value makes approval retries unable to create duplicates.
+  welcome_member_id INT
+    REFERENCES users(user_id)
+    ON DELETE CASCADE
 );
 
 -- Existing development databases also receive the new column when schema.sql
 -- is rerun; CREATE TABLE IF NOT EXISTS alone cannot add later columns.
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS content_edited_at TIMESTAMP DEFAULT NULL;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS welcome_member_id INT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'posts_welcome_member_id_fkey'
+  ) THEN
+    ALTER TABLE posts
+      ADD CONSTRAINT posts_welcome_member_id_fkey
+      FOREIGN KEY (welcome_member_id) REFERENCES users(user_id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'posts_welcome_member_id_unique'
+  ) THEN
+    ALTER TABLE posts
+      ADD CONSTRAINT posts_welcome_member_id_unique UNIQUE (welcome_member_id);
+  END IF;
+END $$;
 
 
 -- ********************* PRIVATE POST REVISION HISTORY ********************* --
@@ -431,5 +472,98 @@ CREATE INDEX IF NOT EXISTS idx_personal_invites_created
   ON personal_invites(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shared_invite_codes_active
   ON shared_invite_codes(active, expires_at);
+
+
+-- ********************* AUTOMATED COMMUNITY POSTS ********************* --
+-- Every newly created forum post alerts every approved, active human member.
+-- This includes the author because the owner explicitly wants ALL members.
+CREATE OR REPLACE FUNCTION notify_members_of_new_forum_post()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO notifications (user_id, actor_id, type, post_id)
+  SELECT user_id, NEW.author_id, 'new_forum_post', NEW.post_id
+  FROM users
+  WHERE account_status = 'approved'
+    AND active = TRUE
+    AND deleted_at IS NULL
+    AND is_system = FALSE;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_notify_members_of_new_forum_post ON posts;
+CREATE TRIGGER trg_notify_members_of_new_forum_post
+AFTER INSERT ON posts
+FOR EACH ROW
+EXECUTE FUNCTION notify_members_of_new_forum_post();
+
+-- Approval through any path reaches the users table. Putting the welcome-post
+-- hook here keeps standard approval, personal invites, and shared codes in one
+-- guaranteed path and in the same transaction as the approval itself.
+CREATE OR REPLACE FUNCTION create_approved_member_welcome_post()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  system_user_id INT;
+  introductions_category_id INT;
+  welcome_post_id INT;
+BEGIN
+  IF NEW.is_system = TRUE
+    OR NEW.role_id <> 100
+    OR NEW.account_status <> 'approved'
+    OR (TG_OP = 'UPDATE' AND OLD.account_status = 'approved') THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT user_id INTO system_user_id
+  FROM users
+  WHERE is_system = TRUE
+    AND active = TRUE
+    AND deleted_at IS NULL
+  LIMIT 1;
+
+  SELECT category_id INTO introductions_category_id
+  FROM forum_categories
+  WHERE slug = 'introductions' AND active = TRUE
+  LIMIT 1;
+
+  IF system_user_id IS NULL OR introductions_category_id IS NULL THEN
+    RAISE EXCEPTION 'Cannot create member welcome post without the protected system user and Introductions category';
+  END IF;
+
+  INSERT INTO posts (
+    category_id, author_id, title, body, welcome_member_id
+  )
+  VALUES (
+    introductions_category_id,
+    system_user_id,
+    format('Welcome, %s!', NEW.username),
+    format('Please join us in giving a warm welcome to our newest community member, @%s. We''re glad you''re here!', NEW.username),
+    NEW.user_id
+  )
+  ON CONFLICT (welcome_member_id) DO NOTHING
+  RETURNING post_id INTO welcome_post_id;
+
+  IF welcome_post_id IS NOT NULL THEN
+    INSERT INTO forum_mentions (
+      mentioned_user_id, mentioned_by, post_id, username_snapshot
+    )
+    VALUES (NEW.user_id, system_user_id, welcome_post_id, NEW.username)
+    ON CONFLICT DO NOTHING;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_create_approved_member_welcome_post ON users;
+CREATE TRIGGER trg_create_approved_member_welcome_post
+AFTER INSERT OR UPDATE OF account_status ON users
+FOR EACH ROW
+EXECUTE FUNCTION create_approved_member_welcome_post();
 
 
