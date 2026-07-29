@@ -57,6 +57,9 @@ export async function getForumPosts({
   categorySlug, section = "community", tagSlugs = [], search,
   sort = "recent", viewerId, page = 0, limit = 20,
 } = {}) {
+  // FORUM LIST TRACE STEP 5: Every filter button shares this one list-query
+  // builder. There are not four separate SQL queries for the four sort buttons.
+  // Instead, safe options from api/forum.js choose these small SQL fragments.
   const values = [viewerId ?? null];
   let categoryFilter = "";
   let searchFilter = "";
@@ -93,6 +96,8 @@ export async function getForumPosts({
   }
 
 
+  // `mine` means posts.author_id must equal the logged-in user's ID ($1).
+  // `saved` checks that same user against the forum_saved_posts join table.
   if (sort === "mine") memberFilter = "AND p.author_id = $1";
   if (sort === "saved") {
     savedFilter = `AND EXISTS (
@@ -101,6 +106,8 @@ export async function getForumPosts({
     )`;
   }
 
+  // `discussed` changes the ordering; `recent` uses latest activity. Both put
+  // pinned posts first, without issuing another database query.
   const orderBy = sort === "discussed"
     ? "p.pinned DESC, comment_count DESC, latest_activity_at DESC, p.post_id DESC"
     : "p.pinned DESC, latest_activity_at DESC, p.post_id DESC";
@@ -108,6 +115,9 @@ export async function getForumPosts({
   const limitParameter = values.length - 1;
   const offsetParameter = values.length;
 
+  // This is the actual PostgreSQL call. `FROM posts p` supplies one base row
+  // per forum post. Joins/subqueries add the author, tags, comment count,
+  // saved status, and reaction count that each PostCard needs.
   const { rows } = await db.query(
     `
       SELECT
@@ -162,6 +172,9 @@ export async function getForumPosts({
     `,
     values
   );
+  // We request 21 rows for a 20-card page. The extra row is not displayed; it
+  // only tells the browser whether infinite scrolling has another page.
+  // Return to TRACE STEP 6 in Forum.jsx, where setPosts() refreshes the list.
   const hasMore = rows.length > limit;
   return { posts: rows.slice(0, limit), has_more: hasMore, next_page: hasMore ? page + 1 : null };
 }
@@ -288,6 +301,9 @@ export async function getForumComments(postId, viewerId) {
 }
 
 export async function createForumPost({ categoryId, authorId, title, body, canPostAnnouncements = false }) {
+  // CREATE POST TRACE STEP 5: This is the actual write to the posts table.
+  // The SELECT also confirms that the category is active and enforces the
+  // announcement permission before PostgreSQL inserts anything.
   const {
     rows: [post],
   } = await db.query(

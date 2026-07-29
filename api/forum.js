@@ -144,10 +144,15 @@ router.patch("/tags/:id", async (req, res) => {
 });
 
 router.get("/posts", async (req, res) => {
+  // FORUM LIST TRACE STEP 4: Forum.jsx's GET request arrives here. Turn its
+  // URL text into safe, known values; never pass a raw sort instruction into
+  // SQL. Then hand those choices and the logged-in user ID to getForumPosts().
   const tagSlugs = String(req.query.tags || req.query.tag || "")
     .split(",").map((slug) => slug.trim()).filter(Boolean).slice(0, 10);
   const sort = ["recent", "discussed", "mine", "saved"].includes(req.query.sort) ? req.query.sort : "recent";
   const page = Math.max(0, Number.parseInt(req.query.page, 10) || 0);
+  // Continue at TRACE STEP 5 in db/queries/forum.js. Its returned object is
+  // sent straight back to Forum.jsx as { posts, has_more, next_page }.
   res.send(await getForumPosts({
     categorySlug: req.query.category,
     section: req.query.section === "announcements" ? "announcements" : "community",
@@ -169,6 +174,9 @@ router.get("/posts/:id", async (req, res) => {
 });
 
 router.post("/posts", async (req, res) => {
+  // CREATE POST TRACE STEP 3: Forum.jsx's POST request arrives here. Validate
+  // the form values and use req.user for the real authenticated author; the
+  // browser is never trusted to choose author_id or staff permission.
   const categoryId = Number(req.body.category_id);
   const title = req.body.title?.trim();
   const body = req.body.body?.trim();
@@ -188,6 +196,8 @@ router.post("/posts", async (req, res) => {
 
   // MENTION TRACE STEP 8A: The server has validated the selected members.
   // Save the normal forum post first, then connect its new ID to mention rows.
+  // CREATE POST TRACE STEP 4: Hand the validated values to the database query.
+  // Continue at TRACE STEP 5 in db/queries/forum.js.
   const post = await createForumPost({
     categoryId,
     authorId: req.user.user_id,
@@ -240,6 +250,8 @@ router.post("/posts", async (req, res) => {
     // make the browser retry and accidentally create a second forum post.
     console.error("Failed to broadcast new-post notifications:", error);
   }
+  // CREATE POST TRACE STEP 6: Return PostgreSQL's new post object (including
+  // post_id) to Forum.jsx, which navigates to that new thread.
   res.status(201).send(post);
 });
 
