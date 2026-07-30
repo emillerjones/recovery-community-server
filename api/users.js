@@ -14,6 +14,7 @@ import requireBody from "#middleware/requireBody";
 import { createToken } from "#utils/jwt";
 // import getUserFromToken from "#middleware/getUserFromToken";
 import requireUser from "#middleware/requireUser";
+import { recordAnalyticsEvent, validAnalyticsSessionId } from "#utils/analytics";
 
 const router = express.Router();
 
@@ -58,6 +59,16 @@ router.post("/login", requireBody(["email", "password"]), async (req, res) => {
     }
     if (!user.active) {
       return res.status(403).send("This account is currently inactive.");
+    }
+
+    const analyticsSessionId = req.body?.analyticsSessionId;
+    if (validAnalyticsSessionId(analyticsSessionId)) {
+      // Successful login is recorded here, after every account check passes.
+      await recordAnalyticsEvent(req, {
+        userId: user.user_id,
+        sessionId: analyticsSessionId,
+        eventType: "login",
+      });
     }
     
     // ✅ FIXED PAYLOAD: Encodes profile details into the token so user.username populates on boot

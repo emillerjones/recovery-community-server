@@ -12,6 +12,7 @@ import notificationsRouter from "#api/notifications";
 import messagesRouter from "#api/messages";
 import registrationRouter from "#api/registration";
 import admissionsRouter from "#api/admissions";
+import analyticsRouter from "#api/analytics";
 
 // Render sits in front of Express as one trusted proxy. This lets rate limiting
 // use the visitor IP from X-Forwarded-For instead of rejecting the proxy header.
@@ -30,6 +31,7 @@ app.use("/api/notifications", notificationsRouter);
 app.use("/api/messages", messagesRouter);
 app.use("/api/registration", registrationRouter);
 app.use("/api/admissions", admissionsRouter);
+app.use("/api/analytics", analyticsRouter);
 
 
 app.use((err, req, res, next) => {
