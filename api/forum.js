@@ -11,6 +11,8 @@ import {
   getForumPostById,
   getForumPosts,
   getForumTags,
+  markAllForumPostsRead,
+  markForumPostRead,
   getFlaggedForumComments,
   getFlaggedForumPosts,
   flagForumComment,
@@ -153,7 +155,7 @@ router.get("/posts", async (req, res) => {
   // Old `sort` links remain compatible while the client moves to the clearer
   // scope + order model.
   const legacySort = req.query.sort;
-  const scope = ["all", "mine", "following"].includes(req.query.scope)
+  const scope = ["all", "unread", "mine", "following"].includes(req.query.scope)
     ? req.query.scope
     : (legacySort === "saved" ? "following" : (legacySort === "mine" ? "mine" : "all"));
   const order = ["recent", "discussed"].includes(req.query.order)
@@ -175,12 +177,27 @@ router.get("/posts", async (req, res) => {
   }));
 });
 
+router.patch("/posts/read-all", async (req, res) => {
+  // READ TRACE STEP 3B: "Mark all read" is authenticated here, then the query
+  // records the current read point for every visible conversation.
+  const marked = await markAllForumPostsRead(req.user.user_id);
+  res.send({ marked });
+});
+
 router.get("/posts/:id", async (req, res) => {
   const post = await getForumPostById(Number(req.params.id), req.user.user_id);
   if (!post) return res.status(404).send({ message: "Post not found." });
 
   const comments = await getForumComments(post.post_id, req.user.user_id);
   res.send({ post, comments });
+});
+
+router.patch("/posts/:id/read", async (req, res) => {
+  // READ TRACE STEP 2: ForumThread calls this after displaying the post. The
+  // logged-in identity comes from requireUser, never from browser-submitted ID.
+  const read = await markForumPostRead(Number(req.params.id), req.user.user_id);
+  if (!read) return res.status(404).send({ message: "Post not found." });
+  res.send(read);
 });
 
 router.post("/posts", async (req, res) => {

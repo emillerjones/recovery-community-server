@@ -403,6 +403,26 @@ CREATE TABLE IF NOT EXISTS forum_saved_posts (
   PRIMARY KEY (user_id, post_id)
 );
 
+-- One row means this member has actually opened this conversation. Keeping
+-- the newest visible comment they saw lets the forum find their first new
+-- reply without storing one read row for every individual comment.
+CREATE TABLE IF NOT EXISTS forum_post_reads (
+  user_id INT NOT NULL
+    REFERENCES users(user_id)
+    ON DELETE CASCADE,
+  post_id INT NOT NULL
+    REFERENCES posts(post_id)
+    ON DELETE CASCADE,
+  last_read_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  last_read_comment_id INT
+    REFERENCES comments(comment_id)
+    ON DELETE SET NULL,
+  PRIMARY KEY (user_id, post_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forum_post_reads_user_time
+  ON forum_post_reads (user_id, last_read_at DESC);
+
 
 -- ************************ FORUM REACTIONS ************************ --
 

@@ -66,6 +66,7 @@ export async function getForumPosts({
   let tagFilter = "";
   let memberFilter = "";
   let savedFilter = "";
+  let unreadFilter = "";
 
   if (categorySlug) {
     values.push(categorySlug);
@@ -103,6 +104,13 @@ export async function getForumPosts({
     savedFilter = `AND EXISTS (
       SELECT 1 FROM forum_saved_posts saved_filter
       WHERE saved_filter.post_id = p.post_id AND saved_filter.user_id = $1
+    )`;
+  }
+  if (scope === "unread") {
+    unreadFilter = `AND (
+      forum_read.last_read_at IS NULL
+      OR GREATEST(p.updated_at, COALESCE(comment_stats.latest_comment_at, p.updated_at))
+        > forum_read.last_read_at
     )`;
   }
 
@@ -143,6 +151,11 @@ export async function getForumPosts({
         ), '[]'::jsonb) AS tags,
         COALESCE(comment_stats.comment_count, 0)::INT AS comment_count,
         GREATEST(p.updated_at, COALESCE(comment_stats.latest_comment_at, p.updated_at)) AS latest_activity_at,
+        (
+          forum_read.last_read_at IS NULL
+          OR GREATEST(p.updated_at, COALESCE(comment_stats.latest_comment_at, p.updated_at))
+            > forum_read.last_read_at
+        ) AS is_unread,
         EXISTS(
           SELECT 1 FROM forum_saved_posts sp
           WHERE sp.post_id = p.post_id AND sp.user_id = $1
@@ -158,6 +171,8 @@ export async function getForumPosts({
           AND cm.active = TRUE
           AND cm.deleted_at IS NULL
       ) comment_stats ON TRUE
+      LEFT JOIN forum_post_reads forum_read
+        ON forum_read.post_id = p.post_id AND forum_read.user_id = $1
       WHERE p.active = TRUE
         AND p.deleted_at IS NULL
         AND c.active = TRUE
@@ -166,6 +181,7 @@ export async function getForumPosts({
         ${searchFilter}
         ${memberFilter}
         ${savedFilter}
+        ${unreadFilter}
       ORDER BY ${orderBy}
       LIMIT $${limitParameter}
       OFFSET $${offsetParameter}
@@ -236,7 +252,21 @@ export async function getForumPostById(postId, viewerId) {
           ) ORDER BY m.mention_id)
           FROM forum_mentions m
           WHERE m.post_id = p.post_id
-        ), '[]'::jsonb) AS mentions
+        ), '[]'::jsonb) AS mentions,
+        (
+          SELECT cm.comment_id
+          FROM comments cm
+          WHERE cm.post_id = p.post_id
+            AND cm.active = TRUE
+            AND cm.deleted_at IS NULL
+            AND cm.created_at > COALESCE((
+              SELECT reads.last_read_at
+              FROM forum_post_reads reads
+              WHERE reads.post_id = p.post_id AND reads.user_id = $2
+            ), '-infinity'::timestamp)
+          ORDER BY cm.created_at, cm.comment_id
+          LIMIT 1
+        ) AS first_unread_comment_id
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
       JOIN users u ON u.user_id = p.author_id
@@ -248,6 +278,50 @@ export async function getForumPostById(postId, viewerId) {
     [postId, viewerId]
   );
   return post;
+}
+
+export async function markForumPostRead(postId, userId) {
+  // READ TRACE STEP 3: Opening a thread reaches this UPSERT. It records one
+  // visit per member/post and remembers the newest visible reply at that time.
+  const { rows: [read] } = await db.query(
+    `INSERT INTO forum_post_reads (user_id, post_id, last_read_at, last_read_comment_id)
+     SELECT $2, p.post_id, NOW(), (
+       SELECT cm.comment_id
+       FROM comments cm
+       WHERE cm.post_id = p.post_id AND cm.active = TRUE AND cm.deleted_at IS NULL
+       ORDER BY cm.created_at DESC, cm.comment_id DESC
+       LIMIT 1
+     )
+     FROM posts p
+     WHERE p.post_id = $1 AND p.active = TRUE AND p.deleted_at IS NULL
+     ON CONFLICT (user_id, post_id) DO UPDATE
+       SET last_read_at = EXCLUDED.last_read_at,
+           last_read_comment_id = EXCLUDED.last_read_comment_id
+     RETURNING *`,
+    [postId, userId]
+  );
+  return read;
+}
+
+export async function markAllForumPostsRead(userId) {
+  // Mark-all intentionally creates rows for visible forum posts. This is the
+  // one bulk action; ordinary browsing still creates rows only when opened.
+  const { rowCount } = await db.query(
+    `INSERT INTO forum_post_reads (user_id, post_id, last_read_at, last_read_comment_id)
+     SELECT $1, p.post_id, NOW(), (
+       SELECT cm.comment_id FROM comments cm
+       WHERE cm.post_id = p.post_id AND cm.active = TRUE AND cm.deleted_at IS NULL
+       ORDER BY cm.created_at DESC, cm.comment_id DESC LIMIT 1
+     )
+     FROM posts p
+     JOIN forum_categories c ON c.category_id = p.category_id
+     WHERE p.active = TRUE AND p.deleted_at IS NULL AND c.active = TRUE
+     ON CONFLICT (user_id, post_id) DO UPDATE
+       SET last_read_at = EXCLUDED.last_read_at,
+           last_read_comment_id = EXCLUDED.last_read_comment_id`,
+    [userId]
+  );
+  return rowCount;
 }
 
 export async function getForumComments(postId, viewerId) {
