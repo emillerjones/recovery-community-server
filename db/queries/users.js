@@ -194,7 +194,7 @@ export async function updateOwnProfile(userId, { bio, phoneNumber, dateOfBirth, 
  * together, or PostgreSQL leaves the account untouched.
  *
  * Established members are ineligible. We refuse anyone with authored forum
- * content, any direct-message conversation activity, staff authority, or
+ * content, any direct-message or Lounge activity, staff authority, or
  * admission tools they created. Their community history belongs to others too.
  */
 export async function hardDeleteTestUser(userId) {
@@ -206,6 +206,7 @@ export async function hardDeleteTestUser(userId) {
          AND u.role_id = 100
          AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.author_id = u.user_id)
          AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.author_id = u.user_id)
+         AND NOT EXISTS (SELECT 1 FROM lounge_messages lm WHERE lm.author_id = u.user_id)
          AND NOT EXISTS (
            SELECT 1 FROM direct_conversations dc
            JOIN direct_messages dm ON dm.conversation_id = dc.conversation_id

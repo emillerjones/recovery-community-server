@@ -1,8 +1,14 @@
 import { Server } from "socket.io";
 import { getConversationForParticipant } from "#db/queries/messages";
+import { getUserById } from "#db/queries/users";
 import { verifyToken } from "#utils/jwt";
 
 let io;
+const onlineUserSockets = new Map();
+
+function broadcastPresence() {
+  io?.emit("community_presence", { online_count: onlineUserSockets.size });
+}
 
 /** Attaches Socket.IO to the given HTTP server and sets up JWT auth + per-user rooms. */
 export function initSocket(httpServer) {
@@ -10,10 +16,14 @@ export function initSocket(httpServer) {
     cors: { origin: true, credentials: true },
   });
 
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     try {
       const { id } = verifyToken(socket.handshake.auth?.token);
-      socket.userId = id;
+      const user = await getUserById(id);
+      if (!user || user.account_status !== "approved" || !user.active || user.deleted_at) {
+        return next(new Error("Unauthorized"));
+      }
+      socket.userId = user.user_id;
       next();
     } catch {
       next(new Error("Unauthorized"));
@@ -22,6 +32,29 @@ export function initSocket(httpServer) {
 
   io.on("connection", (socket) => {
     socket.join(`user:${socket.userId}`);
+
+    // One member may have several tabs/devices. Count unique user IDs rather
+    // than sockets so the navbar presence number stays honest.
+    const userSockets = onlineUserSockets.get(socket.userId) || new Set();
+    userSockets.add(socket.id);
+    onlineUserSockets.set(socket.userId, userSockets);
+    broadcastPresence();
+
+    // React may attach its Lounge listener just after this socket connects.
+    // Let the client request the current count instead of waiting for the next
+    // member to connect or disconnect before its number is corrected.
+    socket.on("request_community_presence", () => {
+      socket.emit("community_presence", {
+        online_count: onlineUserSockets.size,
+      });
+    });
+
+    socket.on("disconnect", () => {
+      const remainingSockets = onlineUserSockets.get(socket.userId);
+      remainingSockets?.delete(socket.id);
+      if (!remainingSockets?.size) onlineUserSockets.delete(socket.userId);
+      broadcastPresence();
+    });
 
     socket.on("join_thread", (postId) => {
       socket.join(`post:${postId}`);
@@ -68,4 +101,13 @@ export function notifyThread(postId, event, payload) {
 /** Emits an event to everyone currently viewing a given DM conversation. */
 export function notifyConversation(conversationId, event, payload) {
   io?.to(`conversation:${conversationId}`).emit(event, payload);
+}
+
+/** Every approved connected member is already part of the persistent Lounge. */
+export function notifyLounge(event, payload) {
+  io?.emit(event, payload);
+}
+
+export function getOnlineUserCount() {
+  return onlineUserSockets.size;
 }
