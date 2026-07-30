@@ -55,11 +55,11 @@ export async function updateForumTag(tagId, { name, slug, description, active })
 
 export async function getForumPosts({
   categorySlug, section = "community", tagSlugs = [], search,
-  sort = "recent", viewerId, page = 0, limit = 20,
+  scope = "all", order = "recent", viewerId, page = 0, limit = 20,
 } = {}) {
-  // FORUM LIST TRACE STEP 5: Every filter button shares this one list-query
-  // builder. There are not four separate SQL queries for the four sort buttons.
-  // Instead, safe options from api/forum.js choose these small SQL fragments.
+  // FORUM LIST TRACE STEP 5: Every filter choice shares this one list-query
+  // builder. Safe scope/order options from api/forum.js choose small SQL
+  // fragments; tags remain a separate stackable filter.
   const values = [viewerId ?? null];
   let categoryFilter = "";
   let searchFilter = "";
@@ -98,8 +98,8 @@ export async function getForumPosts({
 
   // `mine` means posts.author_id must equal the logged-in user's ID ($1).
   // `saved` checks that same user against the forum_saved_posts join table.
-  if (sort === "mine") memberFilter = "AND p.author_id = $1";
-  if (sort === "saved") {
+  if (scope === "mine") memberFilter = "AND p.author_id = $1";
+  if (scope === "saved") {
     savedFilter = `AND EXISTS (
       SELECT 1 FROM forum_saved_posts saved_filter
       WHERE saved_filter.post_id = p.post_id AND saved_filter.user_id = $1
@@ -108,7 +108,7 @@ export async function getForumPosts({
 
   // `discussed` changes the ordering; `recent` uses latest activity. Both put
   // pinned posts first, without issuing another database query.
-  const orderBy = sort === "discussed"
+  const orderBy = order === "discussed"
     ? "p.pinned DESC, comment_count DESC, latest_activity_at DESC, p.post_id DESC"
     : "p.pinned DESC, latest_activity_at DESC, p.post_id DESC";
   values.push(limit + 1, page * limit);

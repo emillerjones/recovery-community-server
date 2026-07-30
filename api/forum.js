@@ -145,11 +145,19 @@ router.patch("/tags/:id", async (req, res) => {
 
 router.get("/posts", async (req, res) => {
   // FORUM LIST TRACE STEP 4: Forum.jsx's GET request arrives here. Turn its
-  // URL text into safe, known values; never pass a raw sort instruction into
+  // URL text into safe, known values; never pass raw filter/order text into
   // SQL. Then hand those choices and the logged-in user ID to getForumPosts().
   const tagSlugs = String(req.query.tags || req.query.tag || "")
     .split(",").map((slug) => slug.trim()).filter(Boolean).slice(0, 10);
-  const sort = ["recent", "discussed", "mine", "saved"].includes(req.query.sort) ? req.query.sort : "recent";
+  // Old `sort` links remain compatible while the client moves to the clearer
+  // scope + order model.
+  const legacySort = req.query.sort;
+  const scope = ["all", "mine", "saved"].includes(req.query.scope)
+    ? req.query.scope
+    : (["mine", "saved"].includes(legacySort) ? legacySort : "all");
+  const order = ["recent", "discussed"].includes(req.query.order)
+    ? req.query.order
+    : (legacySort === "discussed" ? "discussed" : "recent");
   const page = Math.max(0, Number.parseInt(req.query.page, 10) || 0);
   // Continue at TRACE STEP 5 in db/queries/forum.js. Its returned object is
   // sent straight back to Forum.jsx as { posts, has_more, next_page }.
@@ -158,7 +166,8 @@ router.get("/posts", async (req, res) => {
     section: req.query.section === "announcements" ? "announcements" : "community",
     tagSlugs,
     search: req.query.search,
-    sort,
+    scope,
+    order,
     viewerId: req.user.user_id,
     page,
     limit: 20,
