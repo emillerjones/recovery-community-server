@@ -1,5 +1,26 @@
 import db from "#db/client";
 
+/**
+ * Returns the small, privacy-safe member directory used by the new-message
+ * picker. Private profile and account-management fields never leave the DB.
+ */
+export async function getMessageableMembers(excludeUserId) {
+  const { rows } = await db.query(
+    `
+      SELECT user_id, username, avatar_url
+      FROM users
+      WHERE account_status = 'approved'
+        AND active = TRUE
+        AND deleted_at IS NULL
+        AND is_system = FALSE
+        AND user_id <> $1
+      ORDER BY LOWER(username), user_id
+    `,
+    [excludeUserId]
+  );
+  return rows;
+}
+
 /** Finds the conversation between two users, creating it if it doesn't exist yet. */
 export async function getOrCreateConversation(userIdA, userIdB) {
   const userOneId = Math.min(userIdA, userIdB);

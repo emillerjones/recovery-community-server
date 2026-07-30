@@ -4,6 +4,7 @@ import { getUserByUsername } from "#db/queries/users";
 import {
   getConversationForParticipant,
   getConversationsForUser,
+  getMessageableMembers,
   getMessages,
   getOrCreateConversation,
   getUnreadMessageCount,
@@ -15,6 +16,12 @@ import { notifyConversation, notifyUser } from "#utils/socket";
 const router = express.Router();
 
 router.use(requireUser);
+
+router.get("/members", async (req, res) => {
+  // NEW MESSAGE PICKER TRACE STEP 3: Any authenticated member may use this
+  // privacy-safe directory. The query returns only ID, username, and avatar.
+  res.send(await getMessageableMembers(req.user.user_id));
+});
 
 router.get("/conversations", async (req, res) => {
   res.send(await getConversationsForUser(req.user.user_id));
