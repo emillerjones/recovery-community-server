@@ -17,7 +17,7 @@ import {
   flagForumPost,
   reviewForumCommentFlags,
   reviewForumPostFlags,
-  saveForumPost,
+  followForumPost,
   setForumCommentReaction,
   setForumPostReaction,
   setForumPostTags,
@@ -27,7 +27,7 @@ import {
   unflagForumPost,
   removeForumCommentReaction,
   removeForumPostReaction,
-  unsaveForumPost,
+  unfollowForumPost,
   updateForumComment,
   updateForumPost,
   updateForumPostModeration,
@@ -36,6 +36,7 @@ import {
 import {
   createNotification,
   createDirectReplyNotification,
+  createForumFollowerNotifications,
   createForumParticipantNotifications,
   createOrGroupReactionNotification,
   createStaffFlagNotifications,
@@ -152,9 +153,9 @@ router.get("/posts", async (req, res) => {
   // Old `sort` links remain compatible while the client moves to the clearer
   // scope + order model.
   const legacySort = req.query.sort;
-  const scope = ["all", "mine", "saved"].includes(req.query.scope)
+  const scope = ["all", "mine", "following"].includes(req.query.scope)
     ? req.query.scope
-    : (["mine", "saved"].includes(legacySort) ? legacySort : "all");
+    : (legacySort === "saved" ? "following" : (legacySort === "mine" ? "mine" : "all"));
   const order = ["recent", "discussed"].includes(req.query.order)
     ? req.query.order
     : (legacySort === "discussed" ? "discussed" : "recent");
@@ -350,6 +351,20 @@ router.post("/posts/:id/comments", async (req, res) => {
       notifyUser(replyNotification.user_id, "notification", replyNotification);
     }
 
+    const alreadyNotifiedIds = [
+      ...participantNotifications.map((notification) => notification.user_id),
+      ...(replyNotification ? [replyNotification.user_id] : []),
+    ];
+    const followerNotifications = await createForumFollowerNotifications({
+      actorId: req.user.user_id,
+      postId,
+      commentId: comment.comment_id,
+      skipUserIds: alreadyNotifiedIds,
+    });
+    for (const notification of followerNotifications) {
+      notifyUser(notification.user_id, "notification", notification);
+    }
+
     const savedIds = new Set(savedMentions.map((mention) => mention.mentioned_user_id));
     await notifyMentionedUsers({
       mentionedUsers: mentionedUsers.filter((user) => savedIds.has(user.user_id)),
@@ -358,8 +373,8 @@ router.post("/posts/:id/comments", async (req, res) => {
       commentId: comment.comment_id,
       // Do not give the same person an activity alert plus a mention alert.
       skipUserIds: [
-        ...participantNotifications.map((notification) => notification.user_id),
-        ...(replyNotification ? [replyNotification.user_id] : []),
+        ...alreadyNotifiedIds,
+        ...followerNotifications.map((notification) => notification.user_id),
       ],
     });
   } catch (error) {
@@ -478,14 +493,25 @@ router.delete("/posts/:id/flag", async (req, res) => {
   res.send({ flagged: false });
 });
 
+router.post("/posts/:id/follow", async (req, res) => {
+  await followForumPost(Number(req.params.id), req.user.user_id);
+  res.status(201).send({ following: true });
+});
+
+router.delete("/posts/:id/follow", async (req, res) => {
+  await unfollowForumPost(Number(req.params.id), req.user.user_id);
+  res.send({ following: false });
+});
+
+// Temporary compatibility for an already-deployed client using the old name.
 router.post("/posts/:id/save", async (req, res) => {
-  await saveForumPost(Number(req.params.id), req.user.user_id);
-  res.status(201).send({ saved: true });
+  await followForumPost(Number(req.params.id), req.user.user_id);
+  res.status(201).send({ saved: true, following: true });
 });
 
 router.delete("/posts/:id/save", async (req, res) => {
-  await unsaveForumPost(Number(req.params.id), req.user.user_id);
-  res.send({ saved: false });
+  await unfollowForumPost(Number(req.params.id), req.user.user_id);
+  res.send({ saved: false, following: false });
 });
 
 async function notifyReactionRecipients({ req, postId, commentId = null }) {

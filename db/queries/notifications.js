@@ -133,6 +133,45 @@ export async function createDirectReplyNotification({ actorId, postId, parentCom
   return notification;
 }
 
+export async function createForumFollowerNotifications({
+  actorId,
+  postId,
+  commentId,
+  skipUserIds = [],
+}) {
+  // Following is an intentional notification choice, separate from the
+  // owner-defined participant group. Exclude recipients already notified by
+  // participant/reply rules so one new reply creates only one alert per user.
+  const { rows } = await db.query(
+    `
+      WITH eligible_recipients AS (
+        SELECT followed.user_id
+        FROM forum_saved_posts followed
+        JOIN users recipient ON recipient.user_id = followed.user_id
+        WHERE followed.post_id = $2
+          AND followed.user_id <> $1
+          AND NOT (followed.user_id = ANY($4::INT[]))
+          AND recipient.account_status = 'approved'
+          AND recipient.active = TRUE
+          AND recipient.deleted_at IS NULL
+          AND recipient.is_system = FALSE
+      ), inserted AS (
+        INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+        SELECT user_id, $1, 'comment_on_followed_post', $2, $3
+        FROM eligible_recipients
+        RETURNING *
+      )
+      SELECT inserted.*, actor.username AS actor_username, p.title AS post_title
+      FROM inserted
+      JOIN users actor ON actor.user_id = inserted.actor_id
+      JOIN posts p ON p.post_id = inserted.post_id
+      ORDER BY inserted.notification_id
+    `,
+    [actorId, postId, commentId, skipUserIds]
+  );
+  return rows;
+}
+
 export async function getNewPostNotifications(postId) {
   // NEW POST ALERT TRACE STEP 3: the database trigger has already inserted one
   // durable row per eligible member. Return those fresh rows with the display

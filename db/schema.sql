@@ -385,10 +385,11 @@ CREATE INDEX IF NOT EXISTS idx_direct_messages_unread
 
 
 
--- ************************ SAVED POSTS ************************ --
+-- ************************ FOLLOWED POSTS ************************ --
 
--- A private, silent bookmark — saving a post never notifies anyone
--- and never shows a count to other members. Just a personal list.
+-- A private following relationship. Following adds the conversation to the
+-- member's list and opts them into new-comment/reply notifications. Exact
+-- follower counts are visible only to the post author.
 CREATE TABLE IF NOT EXISTS forum_saved_posts (
   user_id INT NOT NULL
     REFERENCES users(user_id),

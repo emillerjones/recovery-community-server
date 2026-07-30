@@ -99,7 +99,7 @@ export async function getForumPosts({
   // `mine` means posts.author_id must equal the logged-in user's ID ($1).
   // `saved` checks that same user against the forum_saved_posts join table.
   if (scope === "mine") memberFilter = "AND p.author_id = $1";
-  if (scope === "saved") {
+  if (scope === "following") {
     savedFilter = `AND EXISTS (
       SELECT 1 FROM forum_saved_posts saved_filter
       WHERE saved_filter.post_id = p.post_id AND saved_filter.user_id = $1
@@ -146,7 +146,7 @@ export async function getForumPosts({
         EXISTS(
           SELECT 1 FROM forum_saved_posts sp
           WHERE sp.post_id = p.post_id AND sp.user_id = $1
-        ) AS saved_by_me,
+        ) AS followed_by_me,
         (SELECT COUNT(*)::INT FROM forum_reactions fr WHERE fr.post_id = p.post_id) AS reaction_count
       FROM posts p
       JOIN forum_categories c ON c.category_id = p.category_id
@@ -210,7 +210,12 @@ export async function getForumPostById(postId, viewerId) {
         EXISTS(
           SELECT 1 FROM forum_saved_posts sp
           WHERE sp.post_id = p.post_id AND sp.user_id = $2
-        ) AS saved_by_me,
+        ) AS followed_by_me,
+        CASE WHEN p.author_id = $2 THEN (
+          SELECT COUNT(*)::INT FROM forum_saved_posts followers
+          WHERE followers.post_id = p.post_id
+            AND followers.user_id <> p.author_id
+        ) ELSE NULL END AS follower_count,
         COALESCE((
           SELECT jsonb_object_agg(t.reaction_type, t.reaction_count)
           FROM (
@@ -722,7 +727,7 @@ export async function reviewForumCommentFlags(commentId, reviewedBy) {
   return rowCount;
 }
 
-export async function saveForumPost(postId, userId) {
+export async function followForumPost(postId, userId) {
   await db.query(
     `
       INSERT INTO forum_saved_posts (user_id, post_id)
@@ -733,7 +738,7 @@ export async function saveForumPost(postId, userId) {
   );
 }
 
-export async function unsaveForumPost(postId, userId) {
+export async function unfollowForumPost(postId, userId) {
   await db.query(
     `DELETE FROM forum_saved_posts WHERE user_id = $1 AND post_id = $2`,
     [userId, postId]
