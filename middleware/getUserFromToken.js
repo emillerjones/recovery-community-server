@@ -8,8 +8,11 @@ export default async function getUserFromToken(req, res, next) {
 
   const token = authorization.split(" ")[1];
   try {
-    const { id } = verifyToken(token);
+    const { id, auth_version: tokenAuthVersion = 0 } = verifyToken(token);
     const user = await getUserById(id);
+    if (!user || user.auth_version !== tokenAuthVersion) {
+      return res.status(401).send("This session is no longer valid.");
+    }
     req.user = user;
     next();
   } catch {

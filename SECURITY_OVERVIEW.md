@@ -48,6 +48,8 @@ Passwords are never intentionally stored as readable text. Before a password ent
 
 The registration form accepts passwords from 8 through 72 characters. The 72-character maximum matches bcrypt's input limitation. Work factor 10 meets OWASP's baseline for systems using bcrypt, although Argon2id would be a worthwhile future upgrade.
 
+Password recovery uses a cryptographically random, one-use link that expires after one hour. PostgreSQL stores only the token's HMAC hash. Completing a reset increments the member's session version, rejects their older REST and Socket.IO tokens, and disconnects their open sessions.
+
 What this protects against: someone who sees the users table cannot simply read each member's original password.
 
 ### 2. Signed authentication tokens
@@ -120,6 +122,7 @@ The application supports standard registration, personal invitations, and shared
 - Atomic database operations when claiming an invitation or code and creating an account.
 - Generic resend responses that do not reveal whether an email has an account.
 - Rate limits on registration and verification-email resending.
+- Generic, rate-limited password-reset requests that do not reveal whether an account exists.
 - Standard applicants remain pending until an owner or administrator approves them.
 
 ### 8. Database constraints
@@ -133,6 +136,7 @@ PostgreSQL provides another defensive layer through:
 - One reaction per member per target.
 - One active flag per member per target.
 - Unique registration-token hashes.
+- Unique password-reset-token hashes.
 - Cascading cleanup of dependent records where appropriate.
 - Exactly one protected system account.
 

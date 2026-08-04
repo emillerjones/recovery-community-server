@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   role_id INT REFERENCES user_roles(role_id),
   email TEXT NOT NULL UNIQUE,  
   password TEXT NOT NULL,
+  auth_version INT NOT NULL DEFAULT 0,
   username TEXT UNIQUE, 
 
   -- System accounts author automatic community content but are not people:
@@ -38,7 +39,8 @@ CREATE TABLE IF NOT EXISTS users (
 -- Rerunning schema.sql upgrades an existing users table too; CREATE TABLE IF
 -- NOT EXISTS only supplies is_system when the table is brand new.
 ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
+  ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS auth_version INT NOT NULL DEFAULT 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_system_account
   ON users (is_system)
@@ -559,6 +561,15 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  reset_id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMP NOT NULL,
+  used_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 ALTER TABLE membership_applications
   DROP CONSTRAINT IF EXISTS membership_applications_personal_invite_id_fkey,
   ADD CONSTRAINT membership_applications_personal_invite_id_fkey
@@ -577,6 +588,8 @@ CREATE INDEX IF NOT EXISTS idx_membership_applications_review_queue
   ON membership_applications(reviewed_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_email_verification_user_active
   ON email_verification_tokens(user_id, used_at, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user_active
+  ON password_reset_tokens(user_id, used_at, expires_at DESC);
 CREATE INDEX IF NOT EXISTS idx_personal_invites_created
   ON personal_invites(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shared_invite_codes_active

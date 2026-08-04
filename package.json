@@ -10,7 +10,8 @@
     "db:schema": "node --env-file=.env -e \"import('child_process').then(({execSync})=>execSync('psql -f db/schema.sql \\\"' + process.env.DATABASE_URL + '\\\"', {stdio:'inherit'}))\"",
     "db:seed": "node --env-file=.env db/seed.runner.js",
     "db:reset": "npm run db:schema && npm run db:seed",
-    "test:registration": "node --env-file=.env tests/registration.integration.runner.js"
+    "test:registration": "node --env-file=.env tests/registration.integration.runner.js",
+    "test:password-reset": "node --env-file=.env tests/password-reset.integration.runner.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

@@ -76,7 +76,8 @@ router.post("/login", requireBody(["email", "password"]), async (req, res) => {
       id: user.user_id,
       username: user.username,
       role_id: user.role_id,
-      avatar_url: user.avatar_url
+      avatar_url: user.avatar_url,
+      auth_version: user.auth_version
     });
     
     delete user.password;

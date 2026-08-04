@@ -18,9 +18,9 @@ export function initSocket(httpServer) {
 
   io.use(async (socket, next) => {
     try {
-      const { id } = verifyToken(socket.handshake.auth?.token);
+      const { id, auth_version: tokenAuthVersion = 0 } = verifyToken(socket.handshake.auth?.token);
       const user = await getUserById(id);
-      if (!user || user.account_status !== "approved" || !user.active || user.deleted_at) {
+      if (!user || user.auth_version !== tokenAuthVersion || user.account_status !== "approved" || !user.active || user.deleted_at) {
         return next(new Error("Unauthorized"));
       }
       socket.userId = user.user_id;
@@ -91,6 +91,13 @@ export function initSocket(httpServer) {
 /** Emits an event to every connection open for a given user (0 or more tabs/devices). */
 export function notifyUser(userId, event, payload) {
   io?.to(`user:${userId}`).emit(event, payload);
+}
+
+/** Password changes revoke every live tab/device for the affected member. */
+export function disconnectUser(userId) {
+  const userRoom = io?.in(`user:${userId}`);
+  userRoom?.emit("session_revoked");
+  userRoom?.disconnectSockets(true);
 }
 
 /** Emits an event to everyone currently viewing a given forum thread. */
