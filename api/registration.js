@@ -6,6 +6,7 @@ import {
 import { createSecureToken, hashSecret } from "#utils/secureTokens";
 import { clientUrl, sendEmail } from "#utils/email";
 import { broadcastMemberWelcomeAlerts } from "#utils/newPostAlerts";
+import { broadcastPendingApplicationAlerts } from "#utils/membershipAlerts";
 
 const router = express.Router();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -134,15 +135,20 @@ router.post("/verify-email", async (req, res) => {
     catch (error) { console.error("Shared-code welcome alert broadcast failed:", error); }
   }
 
-  if (user.account_status === "pending" && process.env.CONTACT_TO) {
-    try {
-      await sendEmail({
-        to: process.env.CONTACT_TO,
-        subject: `Membership application pending: ${user.username}`,
-        text: `${user.username} (${user.email}) verified their email and is ready for review.\n\n${clientUrl("/admin/membership")}`,
-      });
-    } catch (error) {
-      console.error("Pending-member notification failed:", error);
+  if (user.account_status === "pending") {
+    try { await broadcastPendingApplicationAlerts(user.user_id); }
+    catch (error) { console.error("Pending-member website alert failed:", error); }
+
+    if (process.env.CONTACT_TO) {
+      try {
+        await sendEmail({
+          to: process.env.CONTACT_TO,
+          subject: `Membership application pending: ${user.username}`,
+          text: `${user.username} (${user.email}) verified their email and is ready for review.\n\n${clientUrl("/admin/membership")}`,
+        });
+      } catch (error) {
+        console.error("Pending-member email notification failed:", error);
+      }
     }
   }
 

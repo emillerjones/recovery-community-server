@@ -53,6 +53,32 @@ export async function createStaffFlagNotifications({ actorId, postId, commentId 
   return rows;
 }
 
+export async function createPendingApplicationNotifications(applicantId) {
+  // Membership review is limited to owners and administrators. Moderators can
+  // handle forum reports, but they cannot open or decide private applications.
+  const { rows } = await db.query(
+    `
+      WITH inserted AS (
+        INSERT INTO notifications (user_id, actor_id, type)
+        SELECT staff.user_id, $1, 'pending_membership_application'
+        FROM users staff
+        WHERE staff.role_id <= 10
+          AND staff.account_status = 'approved'
+          AND staff.active = TRUE
+          AND staff.deleted_at IS NULL
+          AND staff.is_system = FALSE
+        RETURNING *
+      )
+      SELECT inserted.*, applicant.username AS actor_username, NULL::TEXT AS post_title
+      FROM inserted
+      JOIN users applicant ON applicant.user_id = inserted.actor_id
+      ORDER BY inserted.notification_id
+    `,
+    [applicantId]
+  );
+  return rows;
+}
+
 export async function createForumParticipantNotifications({ actorId, postId, commentId = null, activity }) {
   // The owner-approved participant group is deliberately narrow: the OG
   // poster, original-post reactors, and direct commenters only. Replies below

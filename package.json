@@ -11,7 +11,8 @@
     "db:seed": "node --env-file=.env db/seed.runner.js",
     "db:reset": "npm run db:schema && npm run db:seed",
     "test:registration": "node --env-file=.env tests/registration.integration.runner.js",
-    "test:password-reset": "node --env-file=.env tests/password-reset.integration.runner.js"
+    "test:password-reset": "node --env-file=.env tests/password-reset.integration.runner.js",
+    "test:pending-membership-notifications": "node --env-file=.env tests/pending-membership-notifications.integration.runner.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
