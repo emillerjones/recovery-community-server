@@ -115,11 +115,6 @@ export function notifyLounge(event, payload) {
   io?.emit(event, payload);
 }
 
-/** Broadcasts shared community experiences such as the live Grove. */
-export function notifyCommunity(event, payload) {
-  io?.emit(event, payload);
-}
-
 export function getOnlineUserCount() {
   return onlineUserSockets.size;
 }
