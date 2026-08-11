@@ -1,4 +1,53 @@
-import db from "#db/client";
+import db, { withTransaction } from "#db/client";
+
+function mediaSelectionError() {
+  const error = new Error("One or more photos are unavailable. Remove them and try again.");
+  error.status = 400;
+  return error;
+}
+
+async function attachPendingMedia(client, { mediaIds, userId, postId = null, commentId = null }) {
+  if (!mediaIds.length) return [];
+
+  const { rows: media } = await client.query(
+    `SELECT asset.media_id, asset.format, asset.byte_size, asset.width, asset.height,
+            selected.display_order
+     FROM unnest($1::BIGINT[]) WITH ORDINALITY AS selected(media_id, display_order)
+     JOIN media_assets asset ON asset.media_id = selected.media_id
+     WHERE asset.uploaded_by = $2 AND asset.status = 'pending'
+     ORDER BY selected.display_order
+     FOR UPDATE OF asset`,
+    [mediaIds, userId]
+  );
+  if (media.length !== mediaIds.length) throw mediaSelectionError();
+
+  if (postId) {
+    await client.query(
+      `INSERT INTO forum_post_images (post_id, media_id, display_order)
+       SELECT $1, media_id, display_order - 1
+       FROM unnest($2::BIGINT[]) WITH ORDINALITY AS selected(media_id, display_order)`,
+      [postId, mediaIds]
+    );
+  } else {
+    await client.query(
+      `INSERT INTO forum_comment_images (comment_id, media_id, display_order)
+       SELECT $1, media_id, display_order - 1
+       FROM unnest($2::BIGINT[]) WITH ORDINALITY AS selected(media_id, display_order)`,
+      [commentId, mediaIds]
+    );
+  }
+
+  await client.query(
+    `UPDATE media_assets
+     SET status = 'attached', attached_at = NOW()
+     WHERE media_id = ANY($1::BIGINT[])`,
+    [mediaIds]
+  );
+  return media.map(({ display_order, ...asset }) => ({
+    ...asset,
+    display_order: Number(display_order) - 1,
+  }));
+}
 
 export async function getForumCategories() {
   const { rows } = await db.query(`
@@ -55,12 +104,16 @@ export async function updateForumTag(tagId, { name, slug, description, active })
 
 export async function getForumPosts({
   categorySlug, section = "community", tagSlugs = [], search,
-  scope = "all", order = "recent", viewerId, page = 0, limit = 20,
+  scope = "all", order = "recent", sort, viewerId, page = 0, limit = 20,
 } = {}) {
   // FORUM LIST TRACE STEP 5: Every filter choice shares this one list-query
   // builder. Safe scope/order options from api/forum.js choose small SQL
   // fragments; tags remain a separate stackable filter.
   const values = [viewerId ?? null];
+  // Older internal callers used `sort` for the member subset. Keep those
+  // rollback-only integration tests and any queued server work compatible.
+  if (sort === "mine") scope = "mine";
+  if (sort === "saved") scope = "following";
   let categoryFilter = "";
   let searchFilter = "";
   let tagFilter = "";
@@ -149,6 +202,17 @@ export async function getForumPosts({
           JOIN forum_tags tag ON tag.tag_id = post_tag.tag_id
           WHERE post_tag.post_id = p.post_id AND tag.active = TRUE
         ), '[]'::jsonb) AS tags,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'media_id', asset.media_id,
+            'width', asset.width,
+            'height', asset.height,
+            'format', asset.format
+          ) ORDER BY image.display_order)
+          FROM forum_post_images image
+          JOIN media_assets asset ON asset.media_id = image.media_id
+          WHERE image.post_id = p.post_id AND asset.status = 'attached'
+        ), '[]'::jsonb) AS images,
         COALESCE(comment_stats.comment_count, 0)::INT AS comment_count,
         GREATEST(p.updated_at, COALESCE(comment_stats.latest_comment_at, p.updated_at)) AS latest_activity_at,
         (
@@ -216,6 +280,17 @@ export async function getForumPostById(postId, viewerId) {
           JOIN forum_tags tag ON tag.tag_id = post_tag.tag_id
           WHERE post_tag.post_id = p.post_id AND tag.active = TRUE
         ), '[]'::jsonb) AS tags,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'media_id', asset.media_id,
+            'width', asset.width,
+            'height', asset.height,
+            'format', asset.format
+          ) ORDER BY image.display_order)
+          FROM forum_post_images image
+          JOIN media_assets asset ON asset.media_id = image.media_id
+          WHERE image.post_id = p.post_id AND asset.status = 'attached'
+        ), '[]'::jsonb) AS images,
         editor.role_id AS content_edited_by_role_id,
         EXISTS(
           SELECT 1 FROM forum_content_flags flags
@@ -367,7 +442,18 @@ export async function getForumComments(postId, viewerId) {
           ) ORDER BY m.mention_id)
           FROM forum_mentions m
           WHERE m.comment_id = cm.comment_id
-        ), '[]'::jsonb) AS mentions
+        ), '[]'::jsonb) AS mentions,
+        CASE WHEN cm.deleted_at IS NULL THEN COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'media_id', asset.media_id,
+            'width', asset.width,
+            'height', asset.height,
+            'format', asset.format
+          ) ORDER BY image.display_order)
+          FROM forum_comment_images image
+          JOIN media_assets asset ON asset.media_id = image.media_id
+          WHERE image.comment_id = cm.comment_id AND asset.status = 'attached'
+        ), '[]'::jsonb) ELSE '[]'::jsonb END AS images
       FROM comments cm
       JOIN users u ON u.user_id = cm.author_id
       LEFT JOIN users editor ON editor.user_id = cm.content_edited_by
@@ -379,25 +465,29 @@ export async function getForumComments(postId, viewerId) {
   return rows;
 }
 
-export async function createForumPost({ categoryId, authorId, title, body, canPostAnnouncements = false }) {
+export async function createForumPost({ categoryId, authorId, title, body, mediaIds = [], canPostAnnouncements = false }) {
   // CREATE POST TRACE STEP 5: This is the actual write to the posts table.
   // The SELECT also confirms that the category is active and enforces the
   // announcement permission before PostgreSQL inserts anything.
-  const {
-    rows: [post],
-  } = await db.query(
-    `
-      INSERT INTO posts (category_id, author_id, title, body)
-      SELECT category_id, $2, $3, $4
-      FROM forum_categories
-      WHERE category_id = $1
-        AND active = TRUE
-        AND (slug <> 'announcements' OR $5 = TRUE)
-      RETURNING *
-    `,
-    [categoryId, authorId, title.trim(), body.trim(), canPostAnnouncements]
-  );
-  return post;
+  return withTransaction(async (client) => {
+    const { rows: [post] } = await client.query(
+      `INSERT INTO posts (category_id, author_id, title, body)
+       SELECT category_id, $2, $3, $4
+       FROM forum_categories
+       WHERE category_id = $1
+         AND active = TRUE
+         AND (slug <> 'announcements' OR $5 = TRUE)
+       RETURNING *`,
+      [categoryId, authorId, title.trim(), body.trim(), canPostAnnouncements]
+    );
+    if (!post) return post;
+    post.images = await attachPendingMedia(client, {
+      mediaIds,
+      userId: authorId,
+      postId: post.post_id,
+    });
+    return post;
+  });
 }
 
 export async function setForumPostTags(postId, tagIds) {
@@ -420,35 +510,37 @@ export async function setForumPostTags(postId, tagIds) {
   return rows;
 }
 
-export async function createForumComment({ postId, authorId, parentCommentId, body }) {
-  const {
-    rows: [comment],
-  } = await db.query(
-    `
-      WITH inserted AS (
-        INSERT INTO comments (post_id, author_id, parent_comment_id, body)
-        SELECT p.post_id, $2, $3, $4
-        FROM posts p
-        WHERE p.post_id = $1
-          AND p.active = TRUE
-          AND p.deleted_at IS NULL
-          AND p.locked = FALSE
-        RETURNING *
-      )
-      SELECT
-        inserted.*,
-        u.username AS author_username,
-        u.avatar_url AS author_avatar_url,
-        FALSE AS flagged_by_me,
-        '{}'::jsonb AS reactions,
-        NULL::TEXT AS my_reaction,
-        '[]'::jsonb AS mentions
-      FROM inserted
-      JOIN users u ON u.user_id = inserted.author_id
-    `,
-    [postId, authorId, parentCommentId, body.trim()]
-  );
-  return comment;
+export async function createForumComment({ postId, authorId, parentCommentId, body, mediaIds = [] }) {
+  return withTransaction(async (client) => {
+    const { rows: [comment] } = await client.query(
+      `WITH inserted AS (
+         INSERT INTO comments (post_id, author_id, parent_comment_id, body)
+         SELECT p.post_id, $2, $3, $4
+         FROM posts p
+         WHERE p.post_id = $1
+           AND p.active = TRUE
+           AND p.deleted_at IS NULL
+           AND p.locked = FALSE
+         RETURNING *
+       )
+       SELECT inserted.*, u.username AS author_username,
+         u.avatar_url AS author_avatar_url,
+         FALSE AS flagged_by_me,
+         '{}'::jsonb AS reactions,
+         NULL::TEXT AS my_reaction,
+         '[]'::jsonb AS mentions
+       FROM inserted
+       JOIN users u ON u.user_id = inserted.author_id`,
+      [postId, authorId, parentCommentId, body.trim()]
+    );
+    if (!comment) return comment;
+    comment.images = await attachPendingMedia(client, {
+      mediaIds,
+      userId: authorId,
+      commentId: comment.comment_id,
+    });
+    return comment;
+  });
 }
 
 export async function updateForumPostModeration(postId, { pinned, locked }) {

@@ -22,3 +22,37 @@ if (!useSingleClient) {
 }
 
 export default db;
+
+let savepointCounter = 0;
+
+// Production uses a Pool, so a transaction must reserve one connection for
+// its entire lifetime. Integration tests already wrap their single Client in
+// a transaction, so they can safely reuse it directly.
+export async function withTransaction(work) {
+  if (useSingleClient) {
+    const savepoint = `nested_transaction_${++savepointCounter}`;
+    await db.query(`SAVEPOINT ${savepoint}`);
+    try {
+      const result = await work(db);
+      await db.query(`RELEASE SAVEPOINT ${savepoint}`);
+      return result;
+    } catch (error) {
+      await db.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      await db.query(`RELEASE SAVEPOINT ${savepoint}`);
+      throw error;
+    }
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}

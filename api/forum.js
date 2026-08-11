@@ -45,6 +45,14 @@ import {
 } from "#db/queries/notifications";
 import { getActiveMentionUsers } from "#db/queries/users";
 import { notifyThread, notifyUser } from "#utils/socket";
+
+function parseMediaIds(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) return null;
+  const ids = [...new Set(value.map(Number))];
+  if (ids.length > 4 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
+  return ids;
+}
 import { broadcastNewPostAlerts } from "#utils/newPostAlerts";
 
 const router = express.Router();
@@ -209,8 +217,9 @@ router.post("/posts", async (req, res) => {
   const body = req.body.body?.trim();
   const tagIds = [...new Set((Array.isArray(req.body.tag_ids) ? req.body.tag_ids : [])
     .map(Number).filter(Number.isInteger))];
+  const mediaIds = parseMediaIds(req.body.media_ids);
 
-  if (!Number.isInteger(categoryId) || !title || !body || tagIds.length > 3) {
+  if (!Number.isInteger(categoryId) || !title || !body || tagIds.length > 3 || mediaIds === null) {
     return res.status(400).send({ message: "Category, title, and message are required." });
   }
 
@@ -225,13 +234,20 @@ router.post("/posts", async (req, res) => {
   // Save the normal forum post first, then connect its new ID to mention rows.
   // CREATE POST TRACE STEP 4: Hand the validated values to the database query.
   // Continue at TRACE STEP 5 in db/queries/forum.js.
-  const post = await createForumPost({
-    categoryId,
-    authorId: req.user.user_id,
-    title,
-    body,
-    canPostAnnouncements: req.user.role_id <= 50,
-  });
+  let post;
+  try {
+    post = await createForumPost({
+      categoryId,
+      authorId: req.user.user_id,
+      title,
+      body,
+      mediaIds,
+      canPostAnnouncements: req.user.role_id <= 50,
+    });
+  } catch (error) {
+    if (error.status) return res.status(error.status).send({ message: error.message });
+    throw error;
+  }
 
   if (!post) return res.status(400).send({ message: "That category is unavailable." });
   try {
@@ -288,8 +304,9 @@ router.post("/posts/:id/comments", async (req, res) => {
   const parentCommentId = req.body.parent_comment_id == null
     ? null
     : Number(req.body.parent_comment_id);
+  const mediaIds = parseMediaIds(req.body.media_ids);
 
-  if (!Number.isInteger(postId) || !body) {
+  if (!Number.isInteger(postId) || !body || mediaIds === null) {
     return res.status(400).send({ message: "A reply is required." });
   }
   if (parentCommentId !== null && !Number.isInteger(parentCommentId)) {
@@ -305,12 +322,19 @@ router.post("/posts/:id/comments", async (req, res) => {
 
   // TRACE STEP 1: Save the member's reply in the comments table first.
   // createForumComment() contains the SQL and returns the newly saved row.
-  const comment = await createForumComment({
-    postId,
-    authorId: req.user.user_id,
-    parentCommentId,
-    body,
-  });
+  let comment;
+  try {
+    comment = await createForumComment({
+      postId,
+      authorId: req.user.user_id,
+      parentCommentId,
+      body,
+      mediaIds,
+    });
+  } catch (error) {
+    if (error.status) return res.status(error.status).send({ message: error.message });
+    throw error;
+  }
 
   // If the post is missing, deleted, or locked, no comment was created.
   // Stop here so we do not try to notify anyone about a reply that does not exist.
