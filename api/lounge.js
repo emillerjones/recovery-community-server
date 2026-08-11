@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import requireUser from "#middleware/requireUser";
 import {
   createLoungeMessage,
+  getCommunityPulse,
   getLoungeMessages,
   getLoungeStatus,
   markLoungeRead,
@@ -27,6 +28,10 @@ router.get("/status", async (req, res) => {
     online_count: getOnlineUserCount(),
     online_members: getOnlineMembers(),
   });
+});
+
+router.get("/pulse", async (req, res) => {
+  res.send(await getCommunityPulse());
 });
 
 router.get("/messages", async (req, res) => {

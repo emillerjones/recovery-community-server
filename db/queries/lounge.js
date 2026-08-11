@@ -61,6 +61,89 @@ export async function getLoungeStatus(userId) {
   };
 }
 
+export async function getCommunityPulse() {
+  const [summaryResult, weekResult, activityResult] = await Promise.all([
+    db.query(`
+      WITH today_activity AS (
+        SELECT author_id AS user_id, 'post' AS kind
+        FROM posts
+        WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE
+        UNION ALL
+        SELECT author_id, 'reply'
+        FROM comments
+        WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE
+        UNION ALL
+        SELECT user_id, 'reaction'
+        FROM forum_reactions
+        WHERE created_at >= CURRENT_DATE
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE kind = 'post')::INT AS posts_today,
+        COUNT(*) FILTER (WHERE kind = 'reply')::INT AS replies_today,
+        COUNT(*) FILTER (WHERE kind = 'reaction')::INT AS reactions_today,
+        COUNT(DISTINCT user_id)::INT AS participants_today
+      FROM today_activity
+    `),
+    db.query(`
+      WITH days AS (
+        SELECT generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day')::DATE AS day
+      ), activity AS (
+        SELECT created_at::DATE AS day, 'post' AS kind
+        FROM posts WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+        UNION ALL
+        SELECT created_at::DATE, 'reply'
+        FROM comments WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+        UNION ALL
+        SELECT created_at::DATE, 'reaction'
+        FROM forum_reactions WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
+      )
+      SELECT days.day,
+        COUNT(activity.kind) FILTER (WHERE activity.kind = 'post')::INT AS posts,
+        COUNT(activity.kind) FILTER (WHERE activity.kind = 'reply')::INT AS replies,
+        COUNT(activity.kind) FILTER (WHERE activity.kind = 'reaction')::INT AS reactions,
+        COUNT(activity.kind)::INT AS total
+      FROM days
+      LEFT JOIN activity ON activity.day = days.day
+      GROUP BY days.day
+      ORDER BY days.day
+    `),
+    db.query(`
+      WITH recent_activity AS (
+        SELECT p.created_at, 'post' AS activity_type, p.author_id AS actor_id,
+          p.post_id, p.title
+        FROM posts p
+        WHERE p.active = TRUE AND p.deleted_at IS NULL
+        UNION ALL
+        SELECT c.created_at, 'reply', c.author_id, p.post_id, p.title
+        FROM comments c
+        JOIN posts p ON p.post_id = c.post_id
+        WHERE c.active = TRUE AND c.deleted_at IS NULL
+          AND p.active = TRUE AND p.deleted_at IS NULL
+        UNION ALL
+        SELECT reaction.created_at, 'reaction', reaction.user_id,
+          p.post_id, p.title
+        FROM forum_reactions reaction
+        LEFT JOIN comments c ON c.comment_id = reaction.comment_id
+        JOIN posts p ON p.post_id = COALESCE(reaction.post_id, c.post_id)
+        WHERE p.active = TRUE AND p.deleted_at IS NULL
+      )
+      SELECT activity.activity_type, activity.actor_id, activity.post_id,
+        activity.title, activity.created_at, users.username, users.avatar_url
+      FROM recent_activity activity
+      JOIN users ON users.user_id = activity.actor_id
+      WHERE users.active = TRUE AND users.deleted_at IS NULL AND users.is_system = FALSE
+      ORDER BY activity.created_at DESC
+      LIMIT 10
+    `),
+  ]);
+
+  return {
+    summary: summaryResult.rows[0],
+    week: weekResult.rows,
+    activity: activityResult.rows,
+  };
+}
+
 export async function getLoungeMessages({ beforeId = null, limit = 50 }) {
   const values = [ROOM_SLUG];
   const before = beforeId ? "AND lm.message_id < $2" : "";
