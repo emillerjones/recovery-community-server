@@ -6,6 +6,7 @@ import sharp from "sharp";
 import requireUser from "#middleware/requireUser";
 import {
   createPendingMedia,
+  attachProfileAvatar,
   deletePendingMedia,
   expireAbandonedMedia,
   getViewableMedia,
@@ -108,9 +109,10 @@ router.get("/images/:id/content", async (req, res) => {
   const media = await getViewableMedia(mediaId, req.user.user_id);
   if (!media) return res.status(404).send({ message: "Photo not found." });
 
-  const sourceUrl = protectedImageUrl(media.provider_asset_id, {
-    thumbnail: req.query.variant === "thumbnail",
-  });
+  const requestedVariant = ["thumbnail", "avatar"].includes(req.query.variant)
+    ? req.query.variant
+    : "full";
+  const sourceUrl = protectedImageUrl(media.provider_asset_id, { variant: requestedVariant });
   const upstream = await fetch(sourceUrl);
   if (!upstream.ok || !upstream.body) {
     return res.status(502).send({ message: "Photo is temporarily unavailable." });
@@ -119,6 +121,28 @@ router.get("/images/:id/content", async (req, res) => {
   res.set("Content-Type", upstream.headers.get("content-type") || "image/webp");
   res.set("Cache-Control", "private, max-age=300");
   Readable.fromWeb(upstream.body).pipe(res);
+});
+
+router.patch("/images/:id/profile-avatar", async (req, res) => {
+  const mediaId = Number(req.params.id);
+  if (!Number.isSafeInteger(mediaId) || mediaId <= 0) {
+    return res.status(400).send({ message: "Invalid photo." });
+  }
+  try {
+    const { user, retiredProviderAssetId } = await attachProfileAvatar(mediaId, req.user.user_id);
+    if (retiredProviderAssetId) {
+      deleteProtectedImage(retiredProviderAssetId).catch((error) => (
+        console.error("Could not remove replaced profile photo:", error)
+      ));
+    }
+    delete user.password;
+    delete user.notes;
+    res.send(user);
+  } catch (error) {
+    if (error.status) return res.status(error.status).send({ message: error.message });
+    console.error("Could not save profile photo:", error);
+    res.status(500).send({ message: "Your profile photo could not be saved." });
+  }
 });
 
 router.delete("/images/:id", async (req, res) => {

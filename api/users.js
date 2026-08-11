@@ -15,6 +15,7 @@ import { createToken } from "#utils/jwt";
 // import getUserFromToken from "#middleware/getUserFromToken";
 import requireUser from "#middleware/requireUser";
 import { recordAnalyticsEvent, validAnalyticsSessionId } from "#utils/analytics";
+import { deleteProtectedImage } from "#utils/cloudinary";
 
 const router = express.Router();
 
@@ -126,8 +127,12 @@ router.patch("/me/profile", async (req, res) => {
   if (phoneNumber.length > 30) return res.status(400).send({ message: "Phone number must be 30 characters or fewer." });
   if (gender.length > 50) return res.status(400).send({ message: "Gender must be 50 characters or fewer." });
   const avatarMatch = /^preset:([A-Za-z0-9]+):([a-z-]{2,24})$/.exec(avatarUrl);
-  if (avatarUrl && (!avatarMatch || !avatarColors.has(avatarMatch[2]))) {
-    return res.status(400).send({ message: "Choose a valid preset avatar." });
+  const mediaAvatarMatch = /^media:(\d+)$/.exec(avatarUrl);
+  const currentUser = await getUserById(req.user.user_id);
+  const keepsCurrentPhoto = mediaAvatarMatch
+    && String(currentUser?.avatar_media_id) === mediaAvatarMatch[1];
+  if (avatarUrl && !keepsCurrentPhoto && (!avatarMatch || !avatarColors.has(avatarMatch[2]))) {
+    return res.status(400).send({ message: "Choose a valid profile avatar." });
   }
   if (dateOfBirth) {
     const validFormat = /^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth);
@@ -144,6 +149,13 @@ router.patch("/me/profile", async (req, res) => {
   if (!user) return res.status(404).send({ message: "Profile not found." });
   delete user.password;
   delete user.notes;
+  const retiredAvatar = user.retired_avatar_provider_id;
+  delete user.retired_avatar_provider_id;
+  if (retiredAvatar) {
+    deleteProtectedImage(retiredAvatar).catch((cleanupError) => (
+      console.error("Could not remove replaced profile photo:", cleanupError)
+    ));
+  }
   res.send(user);
 });
 

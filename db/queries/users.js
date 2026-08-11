@@ -1,4 +1,4 @@
-import db from "#db/client";
+import db, { withTransaction } from "#db/client";
 import bcrypt from "bcrypt";
 
 export async function getUsers() {
@@ -173,19 +173,38 @@ export async function softDeleteUser(userId) {
 
 /** Updates only the fields a member is allowed to manage on their own profile. */
 export async function updateOwnProfile(userId, { bio, phoneNumber, dateOfBirth, gender, avatarUrl }) {
-  const { rows: [user] } = await db.query(
-    `UPDATE users
-     SET bio = $2,
-         phone_number = $3,
-         date_of_birth = $4,
-         gender = $5,
-         avatar_url = $6,
-         updated_at = NOW()
-     WHERE user_id = $1 AND deleted_at IS NULL
-     RETURNING *`,
-    [userId, bio || null, phoneNumber || null, dateOfBirth || null, gender || null, avatarUrl || null]
-  );
-  return user;
+  return withTransaction(async (client) => {
+    const { rows: [current] } = await client.query(
+      `SELECT avatar_url, avatar_media_id FROM users WHERE user_id = $1 FOR UPDATE`,
+      [userId]
+    );
+    const keepsUploadedAvatar = current?.avatar_media_id
+      && avatarUrl === `media:${current.avatar_media_id}`;
+    let retiredProviderAssetId = null;
+    if (current?.avatar_media_id && !keepsUploadedAvatar) {
+      const { rows: [retired] } = await client.query(
+        `UPDATE media_assets SET status = 'deleted', deleted_at = NOW()
+         WHERE media_id = $1 RETURNING provider_asset_id`,
+        [current.avatar_media_id]
+      );
+      retiredProviderAssetId = retired?.provider_asset_id || null;
+    }
+    const { rows: [user] } = await client.query(
+      `UPDATE users
+       SET bio = $2,
+           phone_number = $3,
+           date_of_birth = $4,
+           gender = $5,
+           avatar_url = $6,
+           avatar_media_id = CASE WHEN $7 THEN avatar_media_id ELSE NULL END,
+           updated_at = NOW()
+       WHERE user_id = $1 AND deleted_at IS NULL
+       RETURNING *`,
+      [userId, bio || null, phoneNumber || null, dateOfBirth || null, gender || null, avatarUrl || null, keepsUploadedAvatar]
+    );
+    if (user && retiredProviderAssetId) user.retired_avatar_provider_id = retiredProviderAssetId;
+    return user;
+  });
 }
 
 /**

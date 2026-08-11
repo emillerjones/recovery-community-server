@@ -1,4 +1,4 @@
-import db from "#db/client";
+import db, { withTransaction } from "#db/client";
 
 export async function createPendingMedia({ uploadedBy, providerAssetId, format, byteSize, width, height }) {
   const { rows: [media] } = await db.query(
@@ -33,10 +33,67 @@ export async function getViewableMedia(mediaId, userId) {
              AND comment.active = TRUE AND comment.deleted_at IS NULL
              AND post.active = TRUE AND post.deleted_at IS NULL
          )
+         OR EXISTS (
+           SELECT 1 FROM users profile
+           WHERE profile.avatar_media_id = ma.media_id
+             AND profile.active = TRUE
+             AND profile.deleted_at IS NULL
+         )
        )`,
     [mediaId, userId]
   );
   return media;
+}
+
+export async function attachProfileAvatar(mediaId, userId) {
+  return withTransaction(async (client) => {
+    const { rows: [media] } = await client.query(
+      `SELECT media_id
+       FROM media_assets
+       WHERE media_id = $1 AND uploaded_by = $2 AND status = 'pending'
+       FOR UPDATE`,
+      [mediaId, userId]
+    );
+    if (!media) {
+      const error = new Error("That uploaded photo is unavailable.");
+      error.status = 400;
+      throw error;
+    }
+
+    const { rows: [previous] } = await client.query(
+      `SELECT asset.media_id, asset.provider_asset_id
+       FROM users profile
+       LEFT JOIN media_assets asset ON asset.media_id = profile.avatar_media_id
+       WHERE profile.user_id = $1
+       FOR UPDATE OF profile`,
+      [userId]
+    );
+    const { rows: [user] } = await client.query(
+      `UPDATE users
+       SET avatar_media_id = $2, avatar_url = $3, updated_at = NOW()
+       WHERE user_id = $1 AND deleted_at IS NULL
+       RETURNING *`,
+      [userId, mediaId, `media:${mediaId}`]
+    );
+    if (!user) {
+      const error = new Error("Profile not found.");
+      error.status = 404;
+      throw error;
+    }
+    await client.query(
+      `UPDATE media_assets SET status = 'attached', attached_at = NOW()
+       WHERE media_id = $1`,
+      [mediaId]
+    );
+    if (previous?.media_id && String(previous.media_id) !== String(mediaId)) {
+      await client.query(
+        `UPDATE media_assets SET status = 'deleted', deleted_at = NOW()
+         WHERE media_id = $1`,
+        [previous.media_id]
+      );
+    }
+    return { user, retiredProviderAssetId: previous?.provider_asset_id || null };
+  });
 }
 
 export async function deletePendingMedia(mediaId, userId) {

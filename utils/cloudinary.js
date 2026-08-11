@@ -31,16 +31,18 @@ export function uploadProtectedImage(buffer) {
   });
 }
 
-export function protectedImageUrl(publicId, { thumbnail = false } = {}) {
+export function protectedImageUrl(publicId, { variant = "full" } = {}) {
   assertConfigured();
   return cloudinary.url(publicId, {
     resource_type: "image",
     type: "authenticated",
     sign_url: true,
     secure: true,
-    transformation: thumbnail
-      ? [{ width: 900, height: 900, crop: "limit", quality: "auto", fetch_format: "auto" }]
-      : [{ quality: "auto", fetch_format: "auto" }],
+    transformation: variant === "avatar"
+      ? [{ width: 192, height: 192, crop: "fill", gravity: "center", quality: "auto", fetch_format: "auto" }]
+      : variant === "thumbnail"
+        ? [{ width: 900, height: 900, crop: "limit", quality: "auto", fetch_format: "auto" }]
+        : [{ quality: "auto", fetch_format: "auto" }],
   });
 }
 
