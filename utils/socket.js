@@ -5,9 +5,17 @@ import { verifyToken } from "#utils/jwt";
 
 let io;
 const onlineUserSockets = new Map();
+const onlineMembers = new Map();
+
+function presencePayload() {
+  return {
+    online_count: onlineUserSockets.size,
+    online_members: [...onlineMembers.values()].slice(0, 12),
+  };
+}
 
 function broadcastPresence() {
-  io?.emit("community_presence", { online_count: onlineUserSockets.size });
+  io?.emit("community_presence", presencePayload());
 }
 
 /** Attaches Socket.IO to the given HTTP server and sets up JWT auth + per-user rooms. */
@@ -24,6 +32,11 @@ export function initSocket(httpServer) {
         return next(new Error("Unauthorized"));
       }
       socket.userId = user.user_id;
+      socket.member = {
+        user_id: user.user_id,
+        username: user.username,
+        avatar_url: user.avatar_url,
+      };
       next();
     } catch {
       next(new Error("Unauthorized"));
@@ -38,21 +51,23 @@ export function initSocket(httpServer) {
     const userSockets = onlineUserSockets.get(socket.userId) || new Set();
     userSockets.add(socket.id);
     onlineUserSockets.set(socket.userId, userSockets);
+    onlineMembers.set(socket.userId, socket.member);
     broadcastPresence();
 
     // React may attach its Lounge listener just after this socket connects.
     // Let the client request the current count instead of waiting for the next
     // member to connect or disconnect before its number is corrected.
     socket.on("request_community_presence", () => {
-      socket.emit("community_presence", {
-        online_count: onlineUserSockets.size,
-      });
+      socket.emit("community_presence", presencePayload());
     });
 
     socket.on("disconnect", () => {
       const remainingSockets = onlineUserSockets.get(socket.userId);
       remainingSockets?.delete(socket.id);
-      if (!remainingSockets?.size) onlineUserSockets.delete(socket.userId);
+      if (!remainingSockets?.size) {
+        onlineUserSockets.delete(socket.userId);
+        onlineMembers.delete(socket.userId);
+      }
       broadcastPresence();
     });
 
@@ -117,4 +132,8 @@ export function notifyLounge(event, payload) {
 
 export function getOnlineUserCount() {
   return onlineUserSockets.size;
+}
+
+export function getOnlineMembers() {
+  return presencePayload().online_members;
 }

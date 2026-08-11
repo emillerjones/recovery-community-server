@@ -8,7 +8,7 @@ import {
   markLoungeRead,
   softDeleteLoungeMessage,
 } from "#db/queries/lounge";
-import { getOnlineUserCount, notifyLounge } from "#utils/socket";
+import { getOnlineMembers, getOnlineUserCount, notifyLounge } from "#utils/socket";
 
 const router = express.Router();
 router.use(requireUser);
@@ -22,7 +22,11 @@ const messageLimiter = rateLimit({
 
 router.get("/status", async (req, res) => {
   const status = await getLoungeStatus(req.user.user_id);
-  res.send({ ...status, online_count: getOnlineUserCount() });
+  res.send({
+    ...status,
+    online_count: getOnlineUserCount(),
+    online_members: getOnlineMembers(),
+  });
 });
 
 router.get("/messages", async (req, res) => {
