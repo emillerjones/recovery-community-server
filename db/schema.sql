@@ -817,10 +817,19 @@ CREATE TABLE IF NOT EXISTS lounge_reads (
 );
 
 
--- ************************ EDITABLE FAQ2 CONTENT ************************ --
+-- ********************* EDITABLE MARKETING PAGE CONTENT ********************* --
 
 CREATE TABLE IF NOT EXISTS faq2_pages (
   page_key TEXT PRIMARY KEY CHECK (page_key = 'faq2'),
+  content JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
+  revision INT NOT NULL DEFAULT 1 CHECK (revision > 0),
+  updated_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS discount_pages (
+  page_key TEXT PRIMARY KEY CHECK (page_key = 'discountlinks2'),
   content JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
   revision INT NOT NULL DEFAULT 1 CHECK (revision > 0),
   updated_by INT REFERENCES users(user_id) ON DELETE SET NULL,

@@ -17,6 +17,7 @@ import loungeRouter from "#api/lounge";
 import passwordResetRouter from "#api/passwordReset";
 import mediaRouter from "#api/media";
 import faq2Router from "#api/faq2";
+import discount2Router from "#api/discount2";
 
 // Render sits in front of Express as one trusted proxy. This lets rate limiting
 // use the visitor IP from X-Forwarded-For instead of rejecting the proxy header.
@@ -40,6 +41,7 @@ app.use("/api/lounge", loungeRouter);
 app.use("/api/password-reset", passwordResetRouter);
 app.use("/api/media", mediaRouter);
 app.use("/api/faq2", faq2Router);
+app.use("/api/discount2", discount2Router);
 
 
 app.use((err, req, res, next) => {
