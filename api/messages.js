@@ -17,6 +17,16 @@ const router = express.Router();
 
 router.use(requireUser);
 
+function parseMediaIds(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) return null;
+  const ids = value.map(Number);
+  if (ids.length > 4
+      || new Set(ids).size !== ids.length
+      || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
+  return ids;
+}
+
 router.get("/members", async (req, res) => {
   // NEW MESSAGE PICKER TRACE STEP 3: Any authenticated member may use this
   // privacy-safe directory. The query returns only ID, username, and avatar.
@@ -56,13 +66,28 @@ router.get("/conversations/:id/messages", async (req, res) => {
 
 router.post("/conversations/:id/messages", async (req, res) => {
   const conversationId = Number(req.params.id);
-  const body = req.body.body?.trim();
-  if (!body) return res.status(400).send({ message: "A message is required." });
+  const body = typeof req.body.body === "string" ? req.body.body.trim() : "";
+  const mediaIds = parseMediaIds(req.body.media_ids);
+  if (mediaIds === null) return res.status(400).send({ message: "Choose up to four valid photos." });
+  if (!body && !mediaIds.length) {
+    return res.status(400).send({ message: "A message or photo is required." });
+  }
 
   const conversation = await getConversationForParticipant(conversationId, req.user.user_id);
   if (!conversation) return res.status(404).send({ message: "Conversation not found." });
 
-  const message = await sendMessage({ conversationId, senderId: req.user.user_id, body });
+  let message;
+  try {
+    message = await sendMessage({
+      conversationId,
+      senderId: req.user.user_id,
+      body,
+      mediaIds,
+    });
+  } catch (error) {
+    if (error.status) return res.status(error.status).send({ message: error.message });
+    throw error;
+  }
 
   const recipientId = conversation.user_one_id === req.user.user_id
     ? conversation.user_two_id

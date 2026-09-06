@@ -34,6 +34,14 @@ export async function getViewableMedia(mediaId, userId) {
              AND post.active = TRUE AND post.deleted_at IS NULL
          )
          OR EXISTS (
+           SELECT 1 FROM direct_message_images image
+           JOIN direct_messages message ON message.message_id = image.message_id
+           JOIN direct_conversations conversation
+             ON conversation.conversation_id = message.conversation_id
+           WHERE image.media_id = ma.media_id
+             AND (conversation.user_one_id = $2 OR conversation.user_two_id = $2)
+         )
+         OR EXISTS (
            SELECT 1 FROM users profile
            WHERE profile.avatar_media_id = ma.media_id
              AND profile.active = TRUE

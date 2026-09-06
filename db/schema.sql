@@ -483,8 +483,9 @@ CREATE TABLE IF NOT EXISTS direct_messages (
   sender_id INT NOT NULL
     REFERENCES users(user_id),
 
-  body TEXT NOT NULL
-    CHECK (LENGTH(TRIM(body)) > 0),
+  -- Photo-only messages use an empty string. The API requires text, one or
+  -- more attached photos, or both in the message transaction.
+  body TEXT NOT NULL DEFAULT '',
 
   read_at TIMESTAMP DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -495,6 +496,22 @@ CREATE INDEX IF NOT EXISTS idx_direct_messages_conversation_created
 
 CREATE INDEX IF NOT EXISTS idx_direct_messages_unread
   ON direct_messages(conversation_id, sender_id, read_at);
+
+-- Rerunning schema.sql upgrades databases created before photo-only messages.
+ALTER TABLE direct_messages
+  DROP CONSTRAINT IF EXISTS direct_messages_body_check;
+
+ALTER TABLE direct_messages
+  ALTER COLUMN body SET DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS direct_message_images (
+  message_id INT NOT NULL REFERENCES direct_messages(message_id) ON DELETE CASCADE,
+  media_id BIGINT NOT NULL UNIQUE REFERENCES media_assets(media_id) ON DELETE CASCADE,
+  display_order SMALLINT NOT NULL CHECK (display_order BETWEEN 0 AND 3),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (message_id, media_id),
+  UNIQUE (message_id, display_order)
+);
 
 
 
