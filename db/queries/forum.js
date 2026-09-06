@@ -1,4 +1,5 @@
 import db, { withTransaction } from "#db/client";
+import { createForumPoll, getForumPollForPost, getForumPollsForPosts } from "#db/queries/polls";
 
 function mediaSelectionError() {
   const error = new Error("One or more photos are unavailable. Remove them and try again.");
@@ -256,7 +257,10 @@ export async function getForumPosts({
   // only tells the browser whether infinite scrolling has another page.
   // Return to TRACE STEP 6 in Forum.jsx, where setPosts() refreshes the list.
   const hasMore = rows.length > limit;
-  return { posts: rows.slice(0, limit), has_more: hasMore, next_page: hasMore ? page + 1 : null };
+  const posts = rows.slice(0, limit);
+  const polls = await getForumPollsForPosts(posts.map((post) => post.post_id), viewerId);
+  for (const post of posts) post.poll = polls.get(String(post.post_id)) || null;
+  return { posts, has_more: hasMore, next_page: hasMore ? page + 1 : null };
 }
 
 export async function getForumPostById(postId, viewerId) {
@@ -352,6 +356,7 @@ export async function getForumPostById(postId, viewerId) {
     `,
     [postId, viewerId]
   );
+  if (post) post.poll = await getForumPollForPost(post.post_id, viewerId);
   return post;
 }
 
@@ -465,11 +470,13 @@ export async function getForumComments(postId, viewerId) {
   return rows;
 }
 
-export async function createForumPost({ categoryId, authorId, title, body, mediaIds = [], canPostAnnouncements = false }) {
+export async function createForumPost({
+  categoryId, authorId, title, body, mediaIds = [], canPostAnnouncements = false, poll = null,
+}) {
   // CREATE POST TRACE STEP 5: This is the actual write to the posts table.
   // The SELECT also confirms that the category is active and enforces the
   // announcement permission before PostgreSQL inserts anything.
-  return withTransaction(async (client) => {
+  const post = await withTransaction(async (client) => {
     const { rows: [post] } = await client.query(
       `INSERT INTO posts (category_id, author_id, title, body)
        SELECT category_id, $2, $3, $4
@@ -486,8 +493,11 @@ export async function createForumPost({ categoryId, authorId, title, body, media
       userId: authorId,
       postId: post.post_id,
     });
+    if (poll) await createForumPoll(client, post.post_id, poll);
     return post;
   });
+  if (post) post.poll = await getForumPollForPost(post.post_id, authorId);
+  return post;
 }
 
 export async function setForumPostTags(postId, tagIds) {

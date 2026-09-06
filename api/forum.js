@@ -45,6 +45,15 @@ import {
 } from "#db/queries/notifications";
 import { getActiveMentionUsers } from "#db/queries/users";
 import { notifyThread, notifyUser } from "#utils/socket";
+import {
+  closeForumPoll,
+  getForumPollForPost,
+  getNamedPollVoters,
+  removeForumPollVote,
+  replaceForumPollVote,
+  updateForumPoll,
+} from "#db/queries/polls";
+import { normalizePollInput } from "#utils/polls";
 
 function parseMediaIds(value) {
   if (value == null) return [];
@@ -208,6 +217,100 @@ router.patch("/posts/:id/read", async (req, res) => {
   res.send(read);
 });
 
+function sendPollError(res, error) {
+  if (error.status) return res.status(error.status).send({ message: error.message });
+  throw error;
+}
+
+function parsePollId(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+router.get("/posts/:id/poll", async (req, res) => {
+  const postId = parsePollId(req.params.id);
+  if (!postId) return res.status(400).send({ message: "Invalid poll." });
+  const poll = await getForumPollForPost(postId, req.user.user_id);
+  if (!poll) return res.status(404).send({ message: "Poll not found." });
+  res.send(poll);
+});
+
+router.put("/posts/:id/poll/vote", async (req, res) => {
+  const postId = parsePollId(req.params.id);
+  if (!postId) return res.status(400).send({ message: "Invalid poll." });
+  const optionIds = Array.isArray(req.body?.option_ids) ? req.body.option_ids : [];
+  try {
+    const poll = await replaceForumPollVote({ postId, userId: req.user.user_id, optionIds });
+    notifyThread(postId, "poll_updated", { post_id: postId });
+    res.send(poll);
+  } catch (error) {
+    return sendPollError(res, error);
+  }
+});
+
+router.delete("/posts/:id/poll/vote", async (req, res) => {
+  const postId = parsePollId(req.params.id);
+  if (!postId) return res.status(400).send({ message: "Invalid poll." });
+  try {
+    const poll = await removeForumPollVote({ postId, userId: req.user.user_id });
+    notifyThread(postId, "poll_updated", { post_id: postId });
+    res.send(poll);
+  } catch (error) {
+    return sendPollError(res, error);
+  }
+});
+
+router.patch("/posts/:id/poll", async (req, res) => {
+  const postId = parsePollId(req.params.id);
+  if (!postId) return res.status(400).send({ message: "Invalid poll." });
+  try {
+    const changes = normalizePollInput(req.body?.poll);
+    const poll = await updateForumPoll({
+      postId,
+      actingUserId: req.user.user_id,
+      canManageAny: req.user.role_id <= 50,
+      poll: changes,
+    });
+    notifyThread(postId, "poll_updated", { post_id: postId });
+    res.send(poll);
+  } catch (error) {
+    return sendPollError(res, error);
+  }
+});
+
+router.patch("/posts/:id/poll/close", async (req, res) => {
+  const postId = parsePollId(req.params.id);
+  if (!postId) return res.status(400).send({ message: "Invalid poll." });
+  try {
+    const poll = await closeForumPoll({
+      postId,
+      actingUserId: req.user.user_id,
+      canManageAny: req.user.role_id <= 50,
+    });
+    notifyThread(postId, "poll_updated", { post_id: postId });
+    res.send(poll);
+  } catch (error) {
+    return sendPollError(res, error);
+  }
+});
+
+router.get("/posts/:id/poll/voters", async (req, res) => {
+  const postId = parsePollId(req.params.id);
+  const optionId = parsePollId(req.query.optionId);
+  if (!postId || !optionId) return res.status(400).send({ message: "Invalid poll choice." });
+  const page = Math.min(10000, Math.max(0, Number.parseInt(req.query.page, 10) || 0));
+  try {
+    res.send(await getNamedPollVoters({
+      postId,
+      viewerId: req.user.user_id,
+      optionId,
+      page,
+    }));
+  } catch (error) {
+    return sendPollError(res, error);
+  }
+});
+
 router.post("/posts", async (req, res) => {
   // CREATE POST TRACE STEP 3: Forum.jsx's POST request arrives here. Validate
   // the form values and use req.user for the real authenticated author; the
@@ -218,6 +321,15 @@ router.post("/posts", async (req, res) => {
   const tagIds = [...new Set((Array.isArray(req.body.tag_ids) ? req.body.tag_ids : [])
     .map(Number).filter(Number.isInteger))];
   const mediaIds = parseMediaIds(req.body.media_ids);
+
+  let poll = null;
+  if (req.body.poll != null) {
+    try {
+      poll = normalizePollInput(req.body.poll);
+    } catch (error) {
+      return res.status(error.status || 400).send({ message: error.message });
+    }
+  }
 
   if (!Number.isInteger(categoryId) || !title || !body || tagIds.length > 3 || mediaIds === null) {
     return res.status(400).send({ message: "Category, title, and message are required." });
@@ -243,6 +355,7 @@ router.post("/posts", async (req, res) => {
       body,
       mediaIds,
       canPostAnnouncements: req.user.role_id <= 50,
+      poll,
     });
   } catch (error) {
     if (error.status) return res.status(error.status).send({ message: error.message });

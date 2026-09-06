@@ -13,6 +13,7 @@
     "test:registration": "node --env-file=.env tests/registration.integration.runner.js",
     "test:password-reset": "node --env-file=.env tests/password-reset.integration.runner.js",
     "test:pending-membership-notifications": "node --env-file=.env tests/pending-membership-notifications.integration.runner.js",
+    "test:polls": "node --env-file=.env tests/forum-polls.integration.runner.js",
     "test:forum-photos": "node --env-file=.env tests/forum-photos.integration.runner.js",
     "test:profile-avatar": "node --env-file=.env tests/profile-avatar.integration.runner.js",
     "test:faq2": "node --env-file=.env tests/faq2.integration.runner.js",
