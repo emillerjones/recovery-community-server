@@ -5,6 +5,7 @@
     "#*": "./*.js"
   },
   "scripts": {
+    "test:post-history": "node --env-file=.env tests/forum-post-history.integration.js",
     "start": "node server.js",
     "dev": "node --watch --env-file=.env server.js",
     "db:schema": "node --env-file=.env -e \"import('child_process').then(({execSync})=>execSync('psql -f db/schema.sql \\\"' + process.env.DATABASE_URL + '\\\"', {stdio:'inherit'}))\"",

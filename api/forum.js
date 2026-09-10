@@ -9,6 +9,7 @@ import {
   getForumComments,
   getForumReactionTarget,
   getForumPostById,
+  getForumPostHistory,
   getForumPosts,
   getForumTags,
   markAllForumPostsRead,
@@ -540,25 +541,35 @@ router.post("/posts/:id/comments", async (req, res) => {
   res.status(201).send(comment);
 });
 
+router.get("/posts/:id/history", async (req, res) => {
+  const postId = Number(req.params.id);
+  if (!Number.isSafeInteger(postId) || postId <= 0) return res.status(400).send({ message: "Invalid post ID." });
+  const post = await getForumPostById(postId, req.user.user_id);
+  if (!post) return res.status(404).send({ message: "Post not found." });
+  res.set("Cache-Control", "no-store");
+  res.send(await getForumPostHistory(postId));
+});
+
 router.patch("/posts/:id", async (req, res) => {
   const postId = Number(req.params.id);
-  const title = req.body.title?.trim();
-  const body = req.body.body?.trim();
+  const title = typeof req.body.title === "string" ? req.body.title.trim() : "";
+  const body = typeof req.body.body === "string" ? req.body.body.trim() : "";
+
+  if (!Number.isSafeInteger(postId) || postId <= 0 || title.length > 180) {
+    return res.status(400).send({ message: "Invalid post ID or title (maximum 180 characters)." });
+  }
 
   if (!title && !body) {
     return res.status(400).send({ message: "Nothing to update." });
   }
 
-  // Members publish permanently. Moderator/admin may correct only their own
-  // post; owner is the sole role allowed to edit another person's wording.
-  const canEditOwn = req.user.role_id <= 50;
-  if (!canEditOwn) {
-    return res.status(403).send({ message: "Published posts cannot be edited by members." });
-  }
+  // Approved members can edit their own original posts. Only the owner may
+  // edit someone else's wording. Comment editing keeps its separate policy.
+  const canEditOwn = true;
   const canEditOthers = req.user.role_id === 1;
 
   // EDIT HISTORY TRACE STEP 3: the query snapshots the current wording into
-  // the private revision table before applying this authorized staff edit.
+  // revision table before applying the edit; post readers may view that history.
   const post = await updateForumPost(postId, req.user.user_id, canEditOwn, canEditOthers, { title, body });
   if (!post) return res.status(404).send({ message: "Post not found, unchanged, or you do not have permission to edit it." });
   res.send(post);

@@ -583,6 +583,20 @@ export async function updateForumPostModeration(postId, { pinned, locked }) {
   return post;
 }
 
+export async function getForumPostHistory(postId) {
+  const { rows } = await db.query(
+    `SELECT r.revision_id, r.previous_title, r.previous_body, r.created_at,
+            u.username AS editor_username
+     FROM forum_post_revisions r
+     JOIN posts p ON p.post_id = r.post_id
+     LEFT JOIN users u ON u.user_id = r.edited_by
+     WHERE r.post_id = $1 AND p.active = TRUE AND p.deleted_at IS NULL
+     ORDER BY r.created_at DESC, r.revision_id DESC`,
+    [postId],
+  );
+  return rows;
+}
+
 export async function updateForumPost(postId, actorId, canEditOwn, canEditOthers, { title, body }) {
   const fields = [];
   const changeChecks = [];
@@ -620,6 +634,7 @@ export async function updateForumPost(postId, actorId, canEditOwn, canEditOthers
             OR $${canEditOthersParameter}
           )
           AND p.deleted_at IS NULL
+          AND p.active = TRUE
         FOR UPDATE
       ),
       updated AS (

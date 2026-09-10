@@ -222,9 +222,8 @@ BEGIN
 END $$;
 
 
--- ********************* PRIVATE POST REVISION HISTORY ********************* --
--- This is intentionally database-only. Members see that a post was edited,
--- but old wording is not exposed through a front-facing API or page.
+-- ********************* POST REVISION HISTORY ********************* --
+-- Previous wording is available to approved readers of the original post.
 CREATE TABLE IF NOT EXISTS forum_post_revisions (
   revision_id SERIAL PRIMARY KEY,
   post_id INT NOT NULL
