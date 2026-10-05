@@ -16,6 +16,8 @@ import { createToken } from "#utils/jwt";
 import requireUser from "#middleware/requireUser";
 import { recordAnalyticsEvent, validAnalyticsSessionId } from "#utils/analytics";
 import { deleteProtectedImage } from "#utils/cloudinary";
+import { revokeStaffChat } from "#utils/socket";
+import { canUseStaffChat } from "#utils/staffChatAccess";
 
 const router = express.Router();
 
@@ -233,6 +235,7 @@ router.patch("/:id/role", requireBody(["role_id"]), async (req, res) => {
   }
 
   const updatedUser = await updateUserRole(targetUserId, newRoleId);
+  if (!canUseStaffChat(updatedUser)) revokeStaffChat(targetUserId);
   delete updatedUser.password;
   res.send(updatedUser);
 });
@@ -260,6 +263,7 @@ router.patch("/:id/active", requireBody(["active"]), async (req, res) => {
   }
 
   const updatedUser = await setUserActive(targetUserId, active);
+  if (!canUseStaffChat(updatedUser)) revokeStaffChat(targetUserId);
   delete updatedUser.password;
   res.send(updatedUser);
 });
