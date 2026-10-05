@@ -144,8 +144,8 @@ export async function getCommunityPulse() {
   };
 }
 
-export async function getLoungeMessages({ beforeId = null, limit = 50 }) {
-  const values = [ROOM_SLUG];
+export async function getLoungeMessages({ beforeId = null, limit = 50, roomSlug = ROOM_SLUG }) {
+  const values = [roomSlug];
   const before = beforeId ? "AND lm.message_id < $2" : "";
   if (beforeId) values.push(beforeId);
   values.push(limit + 1);
@@ -174,7 +174,7 @@ export async function getLoungeMessages({ beforeId = null, limit = 50 }) {
   };
 }
 
-export async function createLoungeMessage({ authorId, authorUsername, body }) {
+export async function createLoungeMessage({ authorId, authorUsername, body, roomSlug = ROOM_SLUG }) {
   const { rows: [message] } = await db.query(
     `
       WITH inserted AS (
@@ -189,7 +189,7 @@ export async function createLoungeMessage({ authorId, authorUsername, body }) {
       FROM inserted
       LEFT JOIN users u ON u.user_id = inserted.author_id
     `,
-    [ROOM_SLUG, authorId, authorUsername, body]
+    [roomSlug, authorId, authorUsername, body]
   );
   return message;
 }
@@ -211,17 +211,18 @@ export async function markLoungeRead(userId) {
   );
 }
 
-export async function softDeleteLoungeMessage({ messageId, actingUserId, canModerate }) {
+export async function softDeleteLoungeMessage({ messageId, actingUserId, canModerate, roomSlug = ROOM_SLUG }) {
   const { rows: [message] } = await db.query(
     `
       UPDATE lounge_messages
       SET deleted_at = NOW(), deleted_by = $2
       WHERE message_id = $1
+        AND room_id = (SELECT room_id FROM lounge_rooms WHERE slug = $4 AND active = TRUE)
         AND deleted_at IS NULL
         AND (author_id = $2 OR $3 = TRUE)
       RETURNING message_id, deleted_at
     `,
-    [messageId, actingUserId, canModerate]
+    [messageId, actingUserId, canModerate, roomSlug]
   );
   return message;
 }
