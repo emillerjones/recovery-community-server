@@ -4,6 +4,7 @@ import { getUserById } from "#db/queries/users";
 import { verifyToken } from "#utils/jwt";
 import { canUseStaffChat } from "#utils/staffChatAccess";
 import { getStaffChatRoom } from "#db/queries/staffChat";
+import { getForumPostAccess } from "#utils/forumAccess";
 
 let io;
 const onlineUserSockets = new Map();
@@ -73,11 +74,24 @@ export function initSocket(httpServer) {
       broadcastPresence();
     });
 
-    socket.on("join_thread", (postId) => {
-      socket.join(`post:${postId}`);
+    socket.on("join_thread", async (postId, ack) => {
+      const room = `post:${Number(postId)}`;
+      socket.threadRequests ??= new Map();
+      const requestId = Symbol();
+      socket.threadRequests.set(room, requestId);
+      try {
+        const access = await authorizedThreadSocket(socket, Number(postId));
+        const allowed = Boolean(access && socket.connected && socket.threadRequests.get(room) === requestId);
+        if (allowed) socket.join(room);
+        if (typeof ack === "function") ack({ ok: allowed });
+      } catch {
+        if (typeof ack === "function") ack({ ok: false });
+      }
     });
     socket.on("leave_thread", (postId) => {
-      socket.leave(`post:${postId}`);
+      const room = `post:${Number(postId)}`;
+      socket.threadRequests?.delete(room);
+      socket.leave(room);
     });
 
     socket.on("join_conversation", async (conversationId) => {
@@ -134,8 +148,27 @@ export function disconnectUser(userId) {
 }
 
 /** Emits an event to everyone currently viewing a given forum thread. */
-export function notifyThread(postId, event, payload) {
-  io?.to(`post:${postId}`).emit(event, payload);
+async function authorizedThreadSocket(socket, postId) {
+  const token = verifyToken(socket.handshake.auth?.token);
+  const user = await getUserById(socket.userId);
+  if (!user || !user.active || user.deleted_at || user.account_status !== "approved" || user.auth_version !== (token.auth_version ?? 0)) return null;
+  return getForumPostAccess(postId, user);
+}
+
+export async function notifyThread(postId, event, payload) {
+  if (!io) return;
+  const room = `post:${postId}`;
+  for (const socketId of io.sockets.adapter.rooms.get(room) || []) {
+    const socket = io.sockets.sockets.get(socketId);
+    if (!socket) continue;
+    try {
+      if (await authorizedThreadSocket(socket, Number(postId))) socket.emit(event, payload);
+      else { socket.leave(room); socket.emit("forum_access_revoked", { post_id: Number(postId) }); }
+    } catch {
+      // Fail closed if current access cannot be verified.
+      socket.leave(room);
+    }
+  }
 }
 
 /** Emits an event to everyone currently viewing a given DM conversation. */

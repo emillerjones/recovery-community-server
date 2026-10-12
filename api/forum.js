@@ -1,5 +1,8 @@
 import express from "express";
 import requireUser from "#middleware/requireUser";
+import db from "#db/client";
+import { canUseStaffChat } from "#utils/staffChatAccess";
+import { getForumPostAccess, getForumCategoryAccess, getStaffAcknowledgments } from "#utils/forumAccess";
 import {
   createForumComment,
   createForumMentions,
@@ -129,8 +132,31 @@ async function notifyMentionedUsers({ mentionedUsers, actorId, postId, commentId
 
 router.use(requireUser);
 
+// One gate covers every post subresource: replies, edits, history, reactions,
+// follows, flags and polls. Do not trust a public post ID paired with a private reply ID.
+router.use("/posts/:id", async (req, res, next) => {
+  if (req.params.id === "read-all") return next();
+  const postId = Number(req.params.id);
+  if (!Number.isSafeInteger(postId) || postId <= 0) return res.status(400).send({ message: "Invalid post ID." });
+  const access = await getForumPostAccess(postId, req.user);
+  if (!access) return res.status(404).send({ message: "Post not found or no longer available." });
+  const commentMatch = /^\/comments\/([^/]+)/.exec(req.path);
+  if (commentMatch) {
+    const commentId = Number(commentMatch[1]);
+    if (!Number.isSafeInteger(commentId) || commentId <= 0) return res.status(400).send({ message: "Invalid reply ID." });
+    const { rowCount } = await db.query("SELECT 1 FROM comments WHERE comment_id = $1 AND post_id = $2", [commentId, postId]);
+    if (!rowCount) return res.status(404).send({ message: "Reply not found." });
+  }
+  req.staffOnly = access.staff_only;
+  if (req.staffOnly) res.set("Cache-Control", "no-store");
+  next();
+});
+
 router.get("/categories", async (req, res) => {
-  res.send(await getForumCategories());
+  res.set("X-Staff-Forum-Version", "1");
+  res.set("Access-Control-Expose-Headers", "X-Staff-Forum-Version");
+  res.set("Cache-Control", "no-store");
+  res.send(await getForumCategories({ includeStaff: canUseStaffChat(req.user) }));
 });
 
 router.get("/tags", async (req, res) => {
@@ -165,6 +191,9 @@ router.patch("/tags/:id", async (req, res) => {
 });
 
 router.get("/posts", async (req, res) => {
+  const staffView = req.query.section === "staff" || req.query.category === "staff-announcements";
+  if (staffView && !canUseStaffChat(req.user)) return res.status(403).send({ message: "Staff access is required." });
+  if (staffView) res.set("Cache-Control", "no-store");
   // FORUM LIST TRACE STEP 4: Forum.jsx's GET request arrives here. Turn its
   // URL text into safe, known values; never pass raw filter/order text into
   // SQL. Then hand those choices and the logged-in user ID to getForumPosts().
@@ -184,7 +213,8 @@ router.get("/posts", async (req, res) => {
   // sent straight back to Forum.jsx as { posts, has_more, next_page }.
   res.send(await getForumPosts({
     categorySlug: req.query.category,
-    section: req.query.section === "announcements" ? "announcements" : "community",
+    section: ["announcements", "staff"].includes(req.query.section) ? req.query.section : "community",
+    includeStaff: canUseStaffChat(req.user),
     tagSlugs,
     search: req.query.search,
     scope,
@@ -198,7 +228,7 @@ router.get("/posts", async (req, res) => {
 router.patch("/posts/read-all", async (req, res) => {
   // READ TRACE STEP 3B: "Mark all read" is authenticated here, then the query
   // records the current read point for every visible conversation.
-  const marked = await markAllForumPostsRead(req.user.user_id);
+  const marked = await markAllForumPostsRead(req.user.user_id, req.body?.section === "staff" && canUseStaffChat(req.user));
   res.send({ marked });
 });
 
@@ -207,6 +237,7 @@ router.get("/posts/:id", async (req, res) => {
   if (!post) return res.status(404).send({ message: "Post not found." });
 
   const comments = await getForumComments(post.post_id, req.user.user_id);
+  if (req.staffOnly) post.acknowledgments = await getStaffAcknowledgments(post.post_id);
   res.send({ post, comments });
 });
 
@@ -269,7 +300,7 @@ router.patch("/posts/:id/poll", async (req, res) => {
     const poll = await updateForumPoll({
       postId,
       actingUserId: req.user.user_id,
-      canManageAny: req.user.role_id <= 50,
+      canManageAny: req.staffOnly ? req.user.role_id === 1 : req.user.role_id <= 50,
       poll: changes,
     });
     notifyThread(postId, "poll_updated", { post_id: postId });
@@ -286,7 +317,7 @@ router.patch("/posts/:id/poll/close", async (req, res) => {
     const poll = await closeForumPoll({
       postId,
       actingUserId: req.user.user_id,
-      canManageAny: req.user.role_id <= 50,
+      canManageAny: req.staffOnly ? req.user.role_id === 1 : req.user.role_id <= 50,
     });
     notifyThread(postId, "poll_updated", { post_id: postId });
     res.send(poll);
@@ -336,6 +367,15 @@ router.post("/posts", async (req, res) => {
     return res.status(400).send({ message: "Category, title, and message are required." });
   }
 
+  const category = await getForumCategoryAccess(categoryId);
+  if (!category || (category.staff_only && !canUseStaffChat(req.user))) return res.status(403).send({ message: "That posting destination is unavailable." });
+  // An explicit audience stops a stale draft or tampered category from silently
+  // publishing private wording to the community (or vice versa).
+  if ((req.body.audience === "staff") !== category.staff_only && (category.staff_only || req.body.audience === "staff")) {
+    return res.status(400).send({ message: "The post audience does not match its destination. Reopen the correct editor." });
+  }
+  req.staffOnly = category.staff_only;
+
   let mentionedUsers;
   try {
     mentionedUsers = await resolveMentionUsers(body, req.body.mentioned_user_ids, req.user.user_id);
@@ -373,6 +413,7 @@ router.post("/posts", async (req, res) => {
     post.tags = [];
   }
   let savedMentions = [];
+  if (req.staffOnly) return res.status(201).send(post);
   try {
     savedMentions = await createForumMentions({
       mentionedUsers,
@@ -453,6 +494,10 @@ router.post("/posts/:id/comments", async (req, res) => {
   // If the post is missing, deleted, or locked, no comment was created.
   // Stop here so we do not try to notify anyone about a reply that does not exist.
   if (!comment) return res.status(400).send({ message: "This conversation is unavailable or locked." });
+  if (req.staffOnly) {
+    await notifyThread(postId, "new_comment", comment);
+    return res.status(201).send(comment);
+  }
 
   // MENTION TRACE STEP 8B: The reply has its permanent comment ID now, so its
   // verified mentioned members can be connected to that exact reply.
@@ -629,6 +674,7 @@ router.delete("/posts/:id/comments/:commentId", async (req, res) => {
 });
 
 router.patch("/posts/:id/moderation", async (req, res) => {
+  if (req.staffOnly && ![1,10].includes(req.user.role_id)) return res.status(403).send({ message: "Owner or administrator access is required to pin or lock staff announcements." });
   if (req.user.role_id > 50) {
     return res.status(403).send({ message: "Moderator access required." });
   }
@@ -680,6 +726,7 @@ router.delete("/posts/:id/save", async (req, res) => {
 });
 
 async function notifyReactionRecipients({ req, postId, commentId = null }) {
+  if (req.staffOnly) return;
   // REACTION TRACE STEP 6: A brand-new reaction reaches this helper after the
   // database save. Changes to an existing reaction deliberately skip alerts.
   // Reactions on the original post alert every existing participant. The new

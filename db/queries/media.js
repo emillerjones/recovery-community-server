@@ -1,4 +1,5 @@
 import db, { withTransaction } from "#db/client";
+import { readablePostSql } from "#utils/forumAccess";
 
 export async function createPendingMedia({ uploadedBy, providerAssetId, format, byteSize, width, height }) {
   const { rows: [media] } = await db.query(
@@ -24,6 +25,7 @@ export async function getViewableMedia(mediaId, userId) {
            JOIN posts post ON post.post_id = image.post_id
            WHERE image.media_id = ma.media_id
              AND post.active = TRUE AND post.deleted_at IS NULL
+             AND ${readablePostSql("post", "$2")}
          )
          OR EXISTS (
            SELECT 1 FROM forum_comment_images image
@@ -32,6 +34,7 @@ export async function getViewableMedia(mediaId, userId) {
            WHERE image.media_id = ma.media_id
              AND comment.active = TRUE AND comment.deleted_at IS NULL
              AND post.active = TRUE AND post.deleted_at IS NULL
+             AND ${readablePostSql("post", "$2")}
          )
          OR EXISTS (
            SELECT 1 FROM direct_message_images image

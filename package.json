@@ -5,6 +5,7 @@
     "#*": "./*.js"
   },
   "scripts": {
+    "test:staff-announcements": "node --env-file=.env tests/staff-announcements.integration.js",
     "test:staff-chat": "node --env-file=.env tests/staff-chat.integration.js",
     "test:post-history": "node --env-file=.env tests/forum-post-history.integration.js",
     "start": "node server.js",

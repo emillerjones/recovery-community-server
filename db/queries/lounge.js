@@ -1,4 +1,5 @@
 import db from "#db/client";
+import { publicPostSql } from "#utils/forumAccess";
 
 const ROOM_SLUG = "community-lounge";
 
@@ -62,19 +63,24 @@ export async function getLoungeStatus(userId) {
 }
 
 export async function getCommunityPulse() {
+  // Community-facing summaries use only member-visible activity, even for staff.
+  const publicActivity = `public_posts AS (SELECT p.* FROM posts p WHERE ${publicPostSql("p")}),
+    public_comments AS (SELECT c.* FROM comments c JOIN public_posts p ON p.post_id = c.post_id),
+    public_reactions AS (SELECT r.* FROM forum_reactions r LEFT JOIN comments c ON c.comment_id = r.comment_id
+      JOIN public_posts p ON p.post_id = COALESCE(r.post_id, c.post_id))`;
   const [summaryResult, weekResult, activityResult] = await Promise.all([
     db.query(`
-      WITH today_activity AS (
+      WITH ${publicActivity}, today_activity AS (
         SELECT author_id AS user_id, 'post' AS kind
-        FROM posts
+        FROM public_posts
         WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE
         UNION ALL
         SELECT author_id, 'reply'
-        FROM comments
+        FROM public_comments
         WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE
         UNION ALL
         SELECT user_id, 'reaction'
-        FROM forum_reactions
+        FROM public_reactions
         WHERE created_at >= CURRENT_DATE
       )
       SELECT
@@ -85,17 +91,17 @@ export async function getCommunityPulse() {
       FROM today_activity
     `),
     db.query(`
-      WITH days AS (
+      WITH ${publicActivity}, days AS (
         SELECT generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day')::DATE AS day
       ), activity AS (
         SELECT created_at::DATE AS day, 'post' AS kind
-        FROM posts WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+        FROM public_posts WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE - INTERVAL '6 days'
         UNION ALL
         SELECT created_at::DATE, 'reply'
-        FROM comments WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+        FROM public_comments WHERE active = TRUE AND deleted_at IS NULL AND created_at >= CURRENT_DATE - INTERVAL '6 days'
         UNION ALL
         SELECT created_at::DATE, 'reaction'
-        FROM forum_reactions WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
+        FROM public_reactions WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
       )
       SELECT days.day,
         COUNT(activity.kind) FILTER (WHERE activity.kind = 'post')::INT AS posts,
@@ -108,23 +114,23 @@ export async function getCommunityPulse() {
       ORDER BY days.day
     `),
     db.query(`
-      WITH recent_activity AS (
+      WITH ${publicActivity}, recent_activity AS (
         SELECT p.created_at, 'post' AS activity_type, p.author_id AS actor_id,
           p.post_id, p.title
-        FROM posts p
+        FROM public_posts p
         WHERE p.active = TRUE AND p.deleted_at IS NULL
         UNION ALL
         SELECT c.created_at, 'reply', c.author_id, p.post_id, p.title
-        FROM comments c
-        JOIN posts p ON p.post_id = c.post_id
+        FROM public_comments c
+        JOIN public_posts p ON p.post_id = c.post_id
         WHERE c.active = TRUE AND c.deleted_at IS NULL
           AND p.active = TRUE AND p.deleted_at IS NULL
         UNION ALL
         SELECT reaction.created_at, 'reaction', reaction.user_id,
           p.post_id, p.title
-        FROM forum_reactions reaction
-        LEFT JOIN comments c ON c.comment_id = reaction.comment_id
-        JOIN posts p ON p.post_id = COALESCE(reaction.post_id, c.post_id)
+        FROM public_reactions reaction
+        LEFT JOIN public_comments c ON c.comment_id = reaction.comment_id
+        JOIN public_posts p ON p.post_id = COALESCE(reaction.post_id, c.post_id)
         WHERE p.active = TRUE AND p.deleted_at IS NULL
       )
       SELECT activity.activity_type, activity.actor_id, activity.post_id,

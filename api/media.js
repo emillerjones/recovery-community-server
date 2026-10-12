@@ -119,7 +119,7 @@ router.get("/images/:id/content", async (req, res) => {
   }
 
   res.set("Content-Type", upstream.headers.get("content-type") || "image/webp");
-  res.set("Cache-Control", "private, max-age=300");
+  res.set("Cache-Control", "private, no-store");
   Readable.fromWeb(upstream.body).pipe(res);
 });
 

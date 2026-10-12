@@ -1,4 +1,5 @@
 import db, { withTransaction } from "#db/client";
+import { staffCategorySql, publicPostSql, readablePostSql } from "#utils/forumAccess";
 import { createForumPoll, getForumPollForPost, getForumPollsForPosts } from "#db/queries/polls";
 
 function mediaSelectionError() {
@@ -50,7 +51,7 @@ async function attachPendingMedia(client, { mediaIds, userId, postId = null, com
   }));
 }
 
-export async function getForumCategories() {
+export async function getForumCategories({ includeStaff = false } = {}) {
   const { rows } = await db.query(`
     SELECT
       c.*,
@@ -62,6 +63,7 @@ export async function getForumCategories() {
       AND p.active = TRUE
       AND p.deleted_at IS NULL
     WHERE c.active = TRUE
+      ${includeStaff ? "" : `AND NOT ${staffCategorySql()}`}
     GROUP BY c.category_id
     ORDER BY c.sort_order, c.name
   `);
@@ -74,7 +76,10 @@ export async function getForumTags({ includeInactive = false } = {}) {
       t.*,
       COUNT(pt.post_id)::INT AS post_count
     FROM forum_tags t
-    LEFT JOIN forum_post_tags pt ON pt.tag_id = t.tag_id
+    LEFT JOIN forum_post_tags pt ON pt.tag_id = t.tag_id AND EXISTS (
+      SELECT 1 FROM posts tagged_post WHERE tagged_post.post_id = pt.post_id
+        AND tagged_post.active = TRUE AND tagged_post.deleted_at IS NULL AND ${publicPostSql("tagged_post")}
+    )
     ${includeInactive ? "" : "WHERE t.active = TRUE"}
     GROUP BY t.tag_id
     ORDER BY t.sort_order, t.name
@@ -105,7 +110,7 @@ export async function updateForumTag(tagId, { name, slug, description, active })
 
 export async function getForumPosts({
   categorySlug, section = "community", tagSlugs = [], search,
-  scope = "all", order = "recent", sort, viewerId, page = 0, limit = 20,
+  scope = "all", order = "recent", sort, viewerId, page = 0, limit = 20, includeStaff = false,
 } = {}) {
   // FORUM LIST TRACE STEP 5: Every filter choice shares this one list-query
   // builder. Safe scope/order options from api/forum.js choose small SQL
@@ -132,6 +137,9 @@ export async function getForumPosts({
   } else if (!categorySlug && section === "community") {
     categoryFilter = "AND c.slug NOT IN ('announcements', 'success-stories')";
   }
+  const staffView = section === "staff" || categorySlug === "staff-announcements";
+  if (staffView) categoryFilter = includeStaff ? `AND ${staffCategorySql()} AND ${readablePostSql("p", "$1")}` : "AND FALSE";
+  else categoryFilter += ` AND NOT ${staffCategorySql()}`;
 
   if (search) {
     values.push(`%${search}%`);
@@ -353,6 +361,7 @@ export async function getForumPostById(postId, viewerId) {
       WHERE p.post_id = $1
         AND p.active = TRUE
         AND p.deleted_at IS NULL
+        AND ${readablePostSql("p", "$2")}
     `,
     [postId, viewerId]
   );
@@ -383,7 +392,7 @@ export async function markForumPostRead(postId, userId) {
   return read;
 }
 
-export async function markAllForumPostsRead(userId) {
+export async function markAllForumPostsRead(userId, staffOnly = false) {
   // Mark-all intentionally creates rows for visible forum posts. This is the
   // one bulk action; ordinary browsing still creates rows only when opened.
   const { rowCount } = await db.query(
@@ -396,6 +405,7 @@ export async function markAllForumPostsRead(userId) {
      FROM posts p
      JOIN forum_categories c ON c.category_id = p.category_id
      WHERE p.active = TRUE AND p.deleted_at IS NULL AND c.active = TRUE
+       AND ${staffOnly ? `${staffCategorySql()} AND ${readablePostSql("p", "$1")}` : `NOT ${staffCategorySql()}`}
      ON CONFLICT (user_id, post_id) DO UPDATE
        SET last_read_at = EXCLUDED.last_read_at,
            last_read_comment_id = EXCLUDED.last_read_comment_id`,
@@ -484,6 +494,10 @@ export async function createForumPost({
        WHERE category_id = $1
          AND active = TRUE
          AND (slug <> 'announcements' OR $5 = TRUE)
+         AND (NOT ${staffCategorySql("forum_categories")} OR EXISTS (
+           SELECT 1 FROM users staff WHERE staff.user_id = $2 AND staff.role_id IN (1,10,50)
+             AND staff.active = TRUE AND staff.deleted_at IS NULL AND staff.account_status = 'approved' AND staff.is_system = FALSE
+         ))
        RETURNING *`,
       [categoryId, authorId, title.trim(), body.trim(), canPostAnnouncements]
     );
