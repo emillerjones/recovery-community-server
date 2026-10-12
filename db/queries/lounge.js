@@ -200,7 +200,7 @@ export async function createLoungeMessage({ authorId, authorUsername, body, room
   return message;
 }
 
-export async function markLoungeRead(userId) {
+export async function markLoungeRead(userId, roomSlug = ROOM_SLUG) {
   await db.query(
     `
       INSERT INTO lounge_reads (room_id, user_id, last_read_message_id)
@@ -213,8 +213,26 @@ export async function markLoungeRead(userId) {
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             updated_at = NOW()
     `,
-    [ROOM_SLUG, userId]
+    [roomSlug, userId]
   );
+}
+
+export async function getLoungeUnreadCount(userId, roomSlug = ROOM_SLUG) {
+  const { rows: [{ unread_count }] } = await db.query(
+    `
+      SELECT COUNT(*)::INT AS unread_count
+      FROM lounge_messages lm
+      JOIN lounge_rooms lr ON lr.room_id = lm.room_id
+      LEFT JOIN lounge_reads read
+        ON read.room_id = lr.room_id AND read.user_id = $2
+      WHERE lr.slug = $1
+        AND lm.deleted_at IS NULL
+        AND lm.author_id IS DISTINCT FROM $2
+        AND lm.message_id > COALESCE(read.last_read_message_id, 0)
+    `,
+    [roomSlug, userId]
+  );
+  return unread_count;
 }
 
 export async function softDeleteLoungeMessage({ messageId, actingUserId, canModerate, roomSlug = ROOM_SLUG }) {

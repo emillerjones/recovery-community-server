@@ -392,6 +392,32 @@ export async function markForumPostRead(postId, userId) {
   return read;
 }
 
+export async function getStaffAnnouncementsUnreadCount(userId) {
+  const { rows: [{ unread_count }] } = await db.query(
+    `
+      SELECT COUNT(*)::INT AS unread_count
+      FROM posts p
+      JOIN forum_categories c ON c.category_id = p.category_id
+      LEFT JOIN LATERAL (
+        SELECT MAX(cm.created_at) AS latest_comment_at
+        FROM comments cm
+        WHERE cm.post_id = p.post_id AND cm.active = TRUE AND cm.deleted_at IS NULL
+      ) comment_stats ON TRUE
+      LEFT JOIN forum_post_reads forum_read
+        ON forum_read.post_id = p.post_id AND forum_read.user_id = $1
+      WHERE p.active = TRUE AND p.deleted_at IS NULL AND c.active = TRUE
+        AND ${staffCategorySql()}
+        AND (
+          forum_read.last_read_at IS NULL
+          OR GREATEST(p.updated_at, COALESCE(comment_stats.latest_comment_at, p.updated_at))
+            > forum_read.last_read_at
+        )
+    `,
+    [userId]
+  );
+  return unread_count;
+}
+
 export async function markAllForumPostsRead(userId, staffOnly = false) {
   // Mark-all intentionally creates rows for visible forum posts. This is the
   // one bulk action; ordinary browsing still creates rows only when opened.

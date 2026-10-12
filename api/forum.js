@@ -15,6 +15,7 @@ import {
   getForumPostHistory,
   getForumPosts,
   getForumTags,
+  getStaffAnnouncementsUnreadCount,
   markAllForumPostsRead,
   markForumPostRead,
   getFlaggedForumComments,
@@ -223,6 +224,12 @@ router.get("/posts", async (req, res) => {
     page,
     limit: 20,
   }));
+});
+
+router.get("/staff/unread-count", async (req, res) => {
+  if (!canUseStaffChat(req.user)) return res.status(403).send({ message: "Staff access is required." });
+  res.set("Cache-Control", "no-store");
+  res.send({ count: await getStaffAnnouncementsUnreadCount(req.user.user_id) });
 });
 
 router.patch("/posts/read-all", async (req, res) => {

@@ -3,7 +3,7 @@ import rateLimit from "express-rate-limit";
 import requireUser from "#middleware/requireUser";
 import { canUseStaffChat } from "#utils/staffChatAccess";
 import { getStaffChatRoom } from "#db/queries/staffChat";
-import { createLoungeMessage, getLoungeMessages, softDeleteLoungeMessage } from "#db/queries/lounge";
+import { createLoungeMessage, getLoungeMessages, getLoungeUnreadCount, markLoungeRead, softDeleteLoungeMessage } from "#db/queries/lounge";
 import { notifyStaffChat } from "#utils/socket";
 
 const router = express.Router();
@@ -14,6 +14,15 @@ router.use(async (req, res, next) => {
   if (!canUseStaffChat(req.user)) return res.status(403).send({ message: "Staff access is required." });
   if (!await getStaffChatRoom()) return res.status(503).send({ message: "Staff Chat is unavailable." });
   next();
+});
+
+router.get("/unread-count", async (req, res) => {
+  res.send({ count: await getLoungeUnreadCount(req.user.user_id, roomSlug) });
+});
+
+router.patch("/read", async (req, res) => {
+  await markLoungeRead(req.user.user_id, roomSlug);
+  res.send({ read: true });
 });
 
 router.get("/messages", async (req, res) => {
