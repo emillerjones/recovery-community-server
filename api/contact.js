@@ -8,6 +8,7 @@ const CONTACT_REASONS = new Set([
   "General questions",
   "Recovery support, not crisis support",
   "Share a success story",
+  "Suggest a resource",
   "Partnership opportunities",
   "Media or speaking inquiries",
   "Website or account help",
