@@ -72,7 +72,7 @@ import { broadcastNewPostAlerts } from "#utils/newPostAlerts";
 const router = express.Router();
 const REACTION_TYPES = new Set([
   "support",
-  "agree",
+  "like",
   "relate",
   "helpful",
   "celebrate",
@@ -131,6 +131,11 @@ async function notifyMentionedUsers({ mentionedUsers, actorId, postId, commentId
   }
 }
 
+// Public deployment marker: release checks need no account or privileged token.
+router.use((req, res, next) => {
+  res.set("X-Reaction-Storage", "like");
+  next();
+});
 router.use(requireUser);
 
 // One gate covers every post subresource: replies, edits, history, reactions,
@@ -245,7 +250,19 @@ router.get("/posts/:id", async (req, res) => {
 
   const comments = await getForumComments(post.post_id, req.user.user_id);
   if (req.staffOnly) post.acknowledgments = await getStaffAcknowledgments(post.post_id);
-  res.send({ post, comments });
+  // Older open pages still use "agree". Only the response spelling changes;
+  // new pages explicitly request "like", which is the stored value.
+  const reactionType = req.query.reaction_format === "like" ? "like" : "agree";
+  res.set("X-Reaction-Format", reactionType);
+  const formatReactions = (item) => {
+    const reactions = { ...item.reactions };
+    const count = Number(reactions.agree || 0) + Number(reactions.like || 0);
+    delete reactions.agree;
+    delete reactions.like;
+    if (count) reactions[reactionType] = count;
+    return { ...item, reactions, my_reaction: ["agree", "like"].includes(item.my_reaction) ? reactionType : item.my_reaction };
+  };
+  res.send({ post: formatReactions(post), comments: comments.map(formatReactions) });
 });
 
 router.patch("/posts/:id/read", async (req, res) => {
@@ -767,7 +784,8 @@ router.put("/posts/:id/reaction", async (req, res) => {
   // REACTION TRACE STEP 4A: PUT requests from togglePostReaction() arrive
   // here. Validate the URL ID and the reaction name before touching the DB.
   const postId = Number(req.params.id);
-  const reactionType = req.body.reaction_type;
+  // Compatibility for pages opened before the rename; always store "like".
+  const reactionType = req.body.reaction_type === "agree" ? "like" : req.body.reaction_type;
   if (!Number.isInteger(postId) || !REACTION_TYPES.has(reactionType)) {
     return res.status(400).send({ message: "Choose a valid reaction." });
   }
@@ -795,7 +813,7 @@ router.put("/posts/:id/comments/:commentId/reaction", async (req, res) => {
   // here. The post ID keeps the route inside its thread; commentId identifies
   // the exact reply that will receive the reaction.
   const commentId = Number(req.params.commentId);
-  const reactionType = req.body.reaction_type;
+  const reactionType = req.body.reaction_type === "agree" ? "like" : req.body.reaction_type;
   if (!Number.isInteger(commentId) || !REACTION_TYPES.has(reactionType)) {
     return res.status(400).send({ message: "Choose a valid reaction." });
   }

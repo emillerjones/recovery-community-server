@@ -27,7 +27,7 @@ export async function getForumCategoryAccess(categoryId) {
 export async function getStaffAcknowledgments(postId) {
   const { rows } = await db.query(
     `SELECT u.user_id, u.username FROM forum_reactions r JOIN users u ON u.user_id = r.user_id
-     WHERE r.post_id = $1 AND r.reaction_type = 'agree' AND u.role_id IN (1,10,50)
+     WHERE r.post_id = $1 AND r.reaction_type IN ('like', 'agree') AND u.role_id IN (1,10,50)
        AND u.active = TRUE AND u.deleted_at IS NULL AND u.account_status = 'approved' AND u.is_system = FALSE
      ORDER BY LOWER(u.username), u.user_id`, [postId]);
   return rows;

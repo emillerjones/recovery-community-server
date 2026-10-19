@@ -49,13 +49,15 @@ try {
   async function request(user,path,method='GET',body) {
     const response=await fetch(base+'/api/forum'+path,{method,headers:{...(user?{Authorization:`Bearer ${tokens.get(user.user_id)}`} :{}),'Content-Type':'application/json'},...(body&&method!=='GET'?{body:JSON.stringify(body)}:{})});
     const text=await response.text();
-    return {status:response.status,data:(()=>{try{return JSON.parse(text);}catch{return text;}})()};
+    return {status:response.status,reactionStorage:response.headers.get('X-Reaction-Storage'),data:(()=>{try{return JSON.parse(text);}catch{return text;}})()};
   }
   async function socketFor(user) {
     const socket=connectSocket(base,{auth:{token:tokens.get(user.user_id)},transports:['websocket'],reconnection:false}); sockets.push(socket);
     await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('connect_error',reject);}); return socket;
   }
   const newPost = (actor, extra={})=>request(actor,'/posts','POST',{category_id:staffCategory.category_id,audience:'staff',title:'Private guideline',body:'Private guidance @member',mentioned_user_ids:[member.user_id],...extra});
+  const publicCheck=await request(null,'/categories');
+  assert.equal(publicCheck.status,401); assert.equal(publicCheck.reactionStorage,'like');
   assert.equal((await newPost(null)).status,401);
   assert.equal((await newPost(member)).status,403);
   assert.equal((await newPost(owner,{audience:'members'})).status,400);
@@ -80,20 +82,39 @@ try {
   const protectedRequests=[
     [path,'GET'],[path+'/history','GET'],[path,'PATCH',{body:'Intrusion'}], [path,'DELETE'],
     [path+'/comments','POST',{body:'Intrusion'}],[path+'/comments/'+replyId,'PATCH',{body:'Intrusion'}],
-    [path+'/comments/'+replyId,'DELETE'],[path+'/reaction','PUT',{reaction_type:'agree'}],
+    [path+'/comments/'+replyId,'DELETE'],[path+'/reaction','PUT',{reaction_type:'like'}],
     [path+'/reaction','DELETE'],[path+'/read','PATCH'],[path+'/follow','POST'],
     [path+'/moderation','PATCH',{pinned:true}], [path+'/poll','GET'], [path+'/poll/vote','PUT',{option_ids:[1]}],
   ];
   for(const [target,method,body] of protectedRequests) assert.equal((await request(member,target,method,body)).status,404,`${method} ${target}`);
-  assert.equal((await request(member,`/posts/${publicPost.post_id}/comments/${replyId}/reaction`,'PUT',{reaction_type:'agree'})).status,404);
+  assert.equal((await request(member,`/posts/${publicPost.post_id}/comments/${replyId}/reaction`,'PUT',{reaction_type:'like'})).status,404);
   for(const actor of [admin,othermod]) assert.equal((await request(actor,path,'PATCH',{body:'Someone else editing'})).status,404);
   assert.equal((await request(moderator,path,'PATCH',{body:'Author revision'})).status,200);
   assert.equal((await request(owner,path,'PATCH',{body:'Owner revision'})).status,200);
   assert.equal((await request(admin,path+'/history')).data.length,2);
   assert.equal((await request(moderator,path+'/moderation','PATCH',{pinned:true})).status,403);
   assert.equal((await request(admin,path+'/moderation','PATCH',{pinned:true})).status,200);
-  assert.equal((await request(othermod,path+'/reaction','PUT',{reaction_type:'agree'})).status,200);
+  assert.equal((await request(othermod,path+'/reaction','PUT',{reaction_type:'like'})).status,200);
   assert.deepEqual((await request(owner,path)).data.post.acknowledgments.map(u=>u.username),['othermod']);
+  assert.equal((await request(othermod,path+'?reaction_format=like')).data.post.my_reaction,'like');
+  assert.equal((await request(othermod,path)).data.post.my_reaction,'agree','Old open pages retain their selected button');
+  for (const target of [path+'/reaction', path+'/comments/'+replyId+'/reaction']) {
+    assert.equal((await request(othermod,target,'PUT',{reaction_type:'invalid'})).status,400);
+    assert.equal((await request(othermod,target,'DELETE')).status,200);
+    assert.equal((await request(othermod,target,'PUT',{reaction_type:'agree'})).data.reaction_type,'like','Legacy requests store like');
+    const first=(await db.query('SELECT * FROM forum_reactions WHERE user_id=$1 AND '+(target.includes('/comments/')?'comment_id=$2':'post_id=$2'),[othermod.user_id,target.includes('/comments/')?replyId:privatePost.post_id])).rows[0];
+    assert.equal(first.reaction_type,'like');
+    assert.equal((await request(othermod,target,'PUT',{reaction_type:'celebrate'})).status,200);
+    assert.equal((await request(othermod,target,'PUT',{reaction_type:'like'})).status,200);
+    const rows=(await db.query('SELECT * FROM forum_reactions WHERE user_id=$1 AND '+(target.includes('/comments/')?'comment_id=$2':'post_id=$2'),[othermod.user_id,target.includes('/comments/')?replyId:privatePost.post_id])).rows;
+    assert.equal(rows.length,1);
+    assert.equal(rows[0].reaction_id,first.reaction_id,'Changing reactions updates the same row');
+    const thread=(await request(othermod,path+'?reaction_format=like')).data;
+    const item=target.includes('/comments/')?thread.comments.find(c=>c.comment_id===replyId):thread.post;
+    assert.equal(item.my_reaction,'like'); assert.equal(item.reactions.like,1); assert.equal(item.reactions.agree,undefined);
+    assert.equal((await request(othermod,target,'DELETE')).status,200);
+  }
+  assert.deepEqual((await request(owner,path)).data.post.acknowledgments,[],'Removing Like removes the acknowledgment');
   const pulseAfter=await getCommunityPulse(); assert.deepEqual(pulseAfter,pulseBefore,'Private posts/replies/reactions must not affect Community Pulse');
   assert.equal((await db.query('SELECT COUNT(*)::int AS n FROM notifications WHERE post_id=$1',[privatePost.post_id])).rows[0].n,0);
   // Even a notification creator outside this router is stopped by the DB trigger.
