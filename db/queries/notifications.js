@@ -12,7 +12,8 @@ export async function createNotification({ userId, actorId, type, postId, commen
       )
       SELECT
         inserted.*,
-        users.username AS actor_username,
+        CASE WHEN posts.is_imported AND inserted.type IN ('new_forum_post', 'mention_in_post')
+          THEN posts.imported_author_label || ' (imported post)' ELSE users.username END AS actor_username,
         posts.title AS post_title
       FROM inserted
       JOIN users ON users.user_id = inserted.actor_id
@@ -204,7 +205,8 @@ export async function getNewPostNotifications(postId) {
   // information the notification bell expects for its real-time update.
   const { rows } = await db.query(
     `
-      SELECT n.*, actor.username AS actor_username, p.title AS post_title
+      SELECT n.*, CASE WHEN p.is_imported THEN p.imported_author_label || ' (imported post)'
+        ELSE actor.username END AS actor_username, p.title AS post_title
       FROM notifications n
       JOIN users actor ON actor.user_id = n.actor_id
       JOIN posts p ON p.post_id = n.post_id
@@ -221,7 +223,8 @@ export async function getNotifications(userId, limit = 30) {
     `
       SELECT
         n.*,
-        u.username AS actor_username,
+        CASE WHEN p.is_imported AND n.type IN ('new_forum_post', 'mention_in_post')
+          THEN p.imported_author_label || ' (imported post)' ELSE u.username END AS actor_username,
         p.title AS post_title,
         CASE
           WHEN n.type = 'reaction_to_post' THEN (

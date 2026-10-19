@@ -82,6 +82,16 @@ CREATE TABLE IF NOT EXISTS posts (
   author_id INT NOT NULL
     REFERENCES users(user_id),
 
+  is_imported BOOLEAN NOT NULL DEFAULT FALSE,
+  imported_author_label TEXT DEFAULT NULL,
+  CONSTRAINT posts_imported_author_check CHECK (
+    (is_imported = FALSE AND imported_author_label IS NULL)
+    OR (is_imported = TRUE AND imported_author_label IS NOT NULL
+      AND imported_author_label = btrim(imported_author_label)
+      AND char_length(imported_author_label) BETWEEN 1 AND 80
+      AND imported_author_label !~ '[[:cntrl:]]')
+  ),
+
   title TEXT NOT NULL
     CHECK (LENGTH(TRIM(title)) > 0),
 

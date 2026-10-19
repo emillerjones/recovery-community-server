@@ -134,9 +134,13 @@ export async function getCommunityPulse() {
         WHERE p.active = TRUE AND p.deleted_at IS NULL
       )
       SELECT activity.activity_type, activity.actor_id, activity.post_id,
-        activity.title, activity.created_at, users.username, users.avatar_url
+        activity.title, activity.created_at,
+        CASE WHEN activity.activity_type = 'post' AND p.is_imported
+          THEN p.imported_author_label || ' (imported post)' ELSE users.username END AS username,
+        CASE WHEN activity.activity_type = 'post' AND p.is_imported THEN NULL ELSE users.avatar_url END AS avatar_url
       FROM recent_activity activity
       JOIN users ON users.user_id = activity.actor_id
+      JOIN posts p ON p.post_id = activity.post_id
       WHERE users.active = TRUE AND users.deleted_at IS NULL AND users.is_system = FALSE
       ORDER BY activity.created_at DESC
       LIMIT 10

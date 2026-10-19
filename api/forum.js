@@ -134,6 +134,7 @@ async function notifyMentionedUsers({ mentionedUsers, actorId, postId, commentId
 // Public deployment marker: release checks need no account or privileged token.
 router.use((req, res, next) => {
   res.set("X-Reaction-Storage", "like");
+  res.set("X-Imported-Post-Authors", "1");
   next();
 });
 router.use(requireUser);
@@ -378,6 +379,22 @@ router.post("/posts", async (req, res) => {
     .map(Number).filter(Number.isInteger))];
   const mediaIds = parseMediaIds(req.body.media_ids);
 
+  const isImported = req.body.is_imported === true;
+  const rawLabel = req.body.imported_author_label;
+  if ((isImported || rawLabel != null) && req.user.role_id !== 1) {
+    return res.status(403).send({ message: "Only the Owner can publish imported posts." });
+  }
+  if (req.body.is_imported !== undefined && typeof req.body.is_imported !== "boolean") {
+    return res.status(400).send({ message: "Choose Myself or Imported name." });
+  }
+  const importedAuthorLabel = typeof rawLabel === "string" ? rawLabel.trim() : null;
+  if (isImported && (!importedAuthorLabel || importedAuthorLabel.length > 80 || /[\p{Cc}\p{Cf}]/u.test(importedAuthorLabel))) {
+    return res.status(400).send({ message: "Enter a display name of 1–80 characters without hidden control characters." });
+  }
+  if (!isImported && rawLabel != null) {
+    return res.status(400).send({ message: "Select Imported name to use a display name." });
+  }
+
   let poll = null;
   if (req.body.poll != null) {
     try {
@@ -420,6 +437,8 @@ router.post("/posts", async (req, res) => {
       body,
       mediaIds,
       canPostAnnouncements: req.user.role_id <= 50,
+      isImported,
+      importedAuthorLabel,
       poll,
     });
   } catch (error) {

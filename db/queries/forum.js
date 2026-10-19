@@ -199,8 +199,10 @@ export async function getForumPosts({
         p.created_at,
         c.slug AS category_slug,
         u.user_id AS author_id,
-        u.username AS author_username,
-        u.avatar_url AS author_avatar_url,
+        p.is_imported,
+        p.imported_author_label,
+        CASE WHEN p.is_imported THEN p.imported_author_label ELSE u.username END AS author_username,
+        CASE WHEN p.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
         COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
             'tag_id', tag.tag_id,
@@ -280,8 +282,8 @@ export async function getForumPostById(postId, viewerId) {
         p.*,
         c.name AS category_name,
         c.slug AS category_slug,
-        u.username AS author_username,
-        u.avatar_url AS author_avatar_url,
+        CASE WHEN p.is_imported THEN p.imported_author_label ELSE u.username END AS author_username,
+        CASE WHEN p.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
         COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
             'tag_id', tag.tag_id,
@@ -508,24 +510,30 @@ export async function getForumComments(postId, viewerId) {
 
 export async function createForumPost({
   categoryId, authorId, title, body, mediaIds = [], canPostAnnouncements = false, poll = null,
+  isImported = false, importedAuthorLabel = null,
 }) {
   // CREATE POST TRACE STEP 5: This is the actual write to the posts table.
   // The SELECT also confirms that the category is active and enforces the
   // announcement permission before PostgreSQL inserts anything.
   const post = await withTransaction(async (client) => {
     const { rows: [post] } = await client.query(
-      `INSERT INTO posts (category_id, author_id, title, body)
-       SELECT category_id, $2, $3, $4
+      `INSERT INTO posts (category_id, author_id, title, body, is_imported, imported_author_label)
+       SELECT category_id, $2, $3, $4, $6, $7
        FROM forum_categories
        WHERE category_id = $1
          AND active = TRUE
          AND (slug <> 'announcements' OR $5 = TRUE)
+         AND (NOT $6 OR EXISTS (
+           SELECT 1 FROM users owner WHERE owner.user_id = $2 AND owner.role_id = 1
+             AND owner.active = TRUE AND owner.deleted_at IS NULL
+             AND owner.account_status = 'approved' AND owner.is_system = FALSE
+         ))
          AND (NOT ${staffCategorySql("forum_categories")} OR EXISTS (
            SELECT 1 FROM users staff WHERE staff.user_id = $2 AND staff.role_id IN (1,10,50)
              AND staff.active = TRUE AND staff.deleted_at IS NULL AND staff.account_status = 'approved' AND staff.is_system = FALSE
          ))
        RETURNING *`,
-      [categoryId, authorId, title.trim(), body.trim(), canPostAnnouncements]
+      [categoryId, authorId, title.trim(), body.trim(), canPostAnnouncements, isImported, importedAuthorLabel]
     );
     if (!post) return post;
     post.images = await attachPendingMedia(client, {
@@ -897,8 +905,10 @@ export async function getFlaggedForumPosts() {
       p.title,
       p.body,
       p.author_id,
-      u.username AS author_username,
-      u.avatar_url AS author_avatar_url,
+      p.is_imported,
+      p.imported_author_label,
+      CASE WHEN p.is_imported THEN p.imported_author_label ELSE u.username END AS author_username,
+      CASE WHEN p.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
       COUNT(flags.flag_id)::INT AS flag_count,
       MAX(flags.created_at) AS last_flagged_at
     FROM forum_content_flags flags
