@@ -8,8 +8,7 @@ change the imported status or display name. Replies remain regular replies.
 
 The forum feed, thread, moderation queue, new-post/mention alerts and community
 activity show the imported name. Post avatars use initials instead of the
-Owner's avatar. Feed/thread displays explicitly label imported posts. Alerts
-and activity identify the name as coming from an imported post. The Owner
+Owner's avatar. Public displays show the name without an imported-post label. The Owner
 continues to receive replies and manage their posts through their real ID.
 
 ## Release

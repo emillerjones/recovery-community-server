@@ -75,11 +75,11 @@ try {
     const feed=(await request(actor,'/posts?search=Imported')).data.posts.find(p=>p.post_id===post.post_id);
     assert.equal(feed.author_username,'Participant A'); assert.equal(feed.author_avatar_url,null); assert.equal(feed.is_imported,true);
   }
-  assert.ok((await getNewPostNotifications(post.post_id)).every(n=>n.actor_username==='Participant A (imported post)'));
+  assert.ok((await getNewPostNotifications(post.post_id)).every(n=>n.actor_username==='Participant A'));
   const notifications=(await getNotifications(member.user_id)).filter(n=>n.post_id===post.post_id);
-  assert.ok(notifications.length>0); assert.ok(notifications.every(n=>n.actor_username==='Participant A (imported post)'));
+  assert.ok(notifications.length>0); assert.ok(notifications.every(n=>n.actor_username==='Participant A'));
   const activity=(await getCommunityPulse()).activity.find(a=>a.post_id===post.post_id&&a.activity_type==='post');
-  assert.equal(activity.username,'Participant A (imported post)'); assert.equal(activity.avatar_url,null);
+  assert.equal(activity.username,'Participant A'); assert.equal(activity.avatar_url,null);
   assert.equal((await request(member,path+'/flag','POST')).status,201);
   const flagged=(await request(admin,'/moderation/flags')).data.posts.find(p=>p.post_id===post.post_id);
   assert.equal(flagged.author_username,'Participant A'); assert.equal(flagged.author_avatar_url,null);

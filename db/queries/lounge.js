@@ -136,7 +136,7 @@ export async function getCommunityPulse() {
       SELECT activity.activity_type, activity.actor_id, activity.post_id,
         activity.title, activity.created_at,
         CASE WHEN activity.activity_type = 'post' AND p.is_imported
-          THEN p.imported_author_label || ' (imported post)' ELSE users.username END AS username,
+          THEN p.imported_author_label ELSE users.username END AS username,
         CASE WHEN activity.activity_type = 'post' AND p.is_imported THEN NULL ELSE users.avatar_url END AS avatar_url
       FROM recent_activity activity
       JOIN users ON users.user_id = activity.actor_id
