@@ -450,6 +450,8 @@ export async function getForumComments(postId, viewerId) {
         cm.post_id,
         cm.parent_comment_id,
         cm.author_id,
+        cm.is_imported,
+        cm.imported_author_label,
         cm.created_at,
         cm.updated_at,
         cm.deleted_at,
@@ -457,8 +459,8 @@ export async function getForumComments(postId, viewerId) {
         cm.content_edited_by,
         editor.role_id AS content_edited_by_role_id,
         CASE WHEN cm.deleted_at IS NULL THEN cm.body ELSE NULL END AS body,
-        CASE WHEN cm.deleted_at IS NULL THEN u.username ELSE NULL END AS author_username,
-        CASE WHEN cm.deleted_at IS NULL THEN u.avatar_url ELSE NULL END AS author_avatar_url,
+        CASE WHEN cm.deleted_at IS NULL THEN CASE WHEN cm.is_imported THEN cm.imported_author_label ELSE u.username END ELSE NULL END AS author_username,
+        CASE WHEN cm.deleted_at IS NULL AND NOT cm.is_imported THEN u.avatar_url ELSE NULL END AS author_avatar_url,
         EXISTS(
           SELECT 1 FROM forum_content_flags flags
           WHERE flags.comment_id = cm.comment_id
@@ -568,28 +570,29 @@ export async function setForumPostTags(postId, tagIds) {
   return rows;
 }
 
-export async function createForumComment({ postId, authorId, parentCommentId, body, mediaIds = [] }) {
+export async function createForumComment({ postId, authorId, parentCommentId, body, mediaIds = [], isImported = false, importedAuthorLabel = null }) {
   return withTransaction(async (client) => {
     const { rows: [comment] } = await client.query(
       `WITH inserted AS (
-         INSERT INTO comments (post_id, author_id, parent_comment_id, body)
-         SELECT p.post_id, $2, $3, $4
+         INSERT INTO comments (post_id, author_id, parent_comment_id, body, is_imported, imported_author_label)
+         SELECT p.post_id, $2, $3, $4, $5, $6
          FROM posts p
          WHERE p.post_id = $1
            AND p.active = TRUE
            AND p.deleted_at IS NULL
            AND p.locked = FALSE
+           AND (NOT $5 OR EXISTS (SELECT 1 FROM users creator WHERE creator.user_id = $2 AND creator.role_id = 1))
          RETURNING *
        )
-       SELECT inserted.*, u.username AS author_username,
-         u.avatar_url AS author_avatar_url,
+       SELECT inserted.*, CASE WHEN inserted.is_imported THEN inserted.imported_author_label ELSE u.username END AS author_username,
+         CASE WHEN inserted.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
          FALSE AS flagged_by_me,
          '{}'::jsonb AS reactions,
          NULL::TEXT AS my_reaction,
          '[]'::jsonb AS mentions
        FROM inserted
        JOIN users u ON u.user_id = inserted.author_id`,
-      [postId, authorId, parentCommentId, body.trim()]
+      [postId, authorId, parentCommentId, body.trim(), isImported, importedAuthorLabel]
     );
     if (!comment) return comment;
     comment.images = await attachPendingMedia(client, {
@@ -744,8 +747,8 @@ export async function updateForumComment(postId, commentId, actorId, canEditOwn,
         JOIN updated ON updated.comment_id = previous.comment_id
         RETURNING revision_id
       )
-      SELECT updated.*, u.username AS author_username,
-        u.avatar_url AS author_avatar_url,
+      SELECT updated.*, CASE WHEN updated.is_imported THEN updated.imported_author_label ELSE u.username END AS author_username,
+        CASE WHEN updated.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
         editor.role_id AS content_edited_by_role_id
       FROM updated
       CROSS JOIN revision
@@ -929,8 +932,8 @@ export async function getFlaggedForumComments() {
       cm.post_id,
       cm.body,
       cm.author_id,
-      u.username AS author_username,
-      u.avatar_url AS author_avatar_url,
+      CASE WHEN cm.is_imported THEN cm.imported_author_label ELSE u.username END AS author_username,
+      CASE WHEN cm.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
       COUNT(flags.flag_id)::INT AS flag_count,
       MAX(flags.created_at) AS last_flagged_at
     FROM forum_content_flags flags

@@ -6,7 +6,7 @@ import express from "express";
 process.env.DB_CLIENT_MODE = "single";
 const { default: db } = await import("../db/client.js");
 const { default: forum } = await import("../api/forum.js");
-const { createForumPost } = await import("../db/queries/forum.js");
+const { createForumPost, createForumComment } = await import("../db/queries/forum.js");
 const { getNewPostNotifications, getNotifications } = await import("../db/queries/notifications.js");
 const { getCommunityPulse } = await import("../db/queries/lounge.js");
 const schema = `test_imported_posts_${randomUUID().replaceAll("-", "")}`;
@@ -87,8 +87,68 @@ try {
   assert.equal((await request(owner,path,'PATCH',{body:'Owner correction',is_imported:false,imported_author_label:'Changed'})).status,200);
   assert.equal((await request(owner,path)).data.post.imported_author_label,'Participant A');
   const reply=await request(member,path+'/comments','POST',{body:'A regular reply',is_imported:true,imported_author_label:'Fake'});
-  assert.equal(reply.status,201); assert.equal(reply.data.author_id,member.user_id); assert.equal(reply.data.author_username,'member');
-  assert.equal(reply.data.is_imported,undefined,'Replies retain their existing author model');
+  assert.equal(reply.status,403, 'Members cannot forge another-name replies');
+  // Both direct comments and nested replies share the same protected model.
+  const regular = await request(member,path+'/comments','POST',{body:'Regular comment'});
+  assert.equal(regular.status,201);
+  assert.equal(regular.data.is_imported,false);
+  assert.equal(regular.data.author_username,'member');
+  const legacyComments=(await db.query('SELECT * FROM comments ORDER BY comment_id')).rows;
+  await db.query('ALTER TABLE comments DROP COLUMN is_imported CASCADE, DROP COLUMN imported_author_label');
+  const freshCommentMigration=(await fs.readFile(new URL('../db/migrations/028_add_imported_comment_authors.sql',import.meta.url),'utf8')).replace(/^BEGIN;\s*/i,'').replace(/\s*COMMIT;\s*$/i,'');
+  await db.query(freshCommentMigration); await db.query(freshCommentMigration);
+  assert.deepEqual((await db.query('SELECT * FROM comments ORDER BY comment_id')).rows,legacyComments);
+
+  for (const actor of [admin,moderator,member]) {
+    for (const parent of [null,regular.data.comment_id]) {
+      assert.equal((await request(actor,path+'/comments','POST',{body:'Denied',parent_comment_id:parent,is_imported:true,imported_author_label:'Fake'})).status,403);
+      assert.equal((await request(actor,path+'/comments','POST',{body:'Denied',parent_comment_id:parent,imported_author_label:'Fake'})).status,403);
+    }
+    assert.equal(await createForumComment({postId:post.post_id,authorId:actor.user_id,body:'Denied',isImported:true,importedAuthorLabel:'Fake'}),undefined);
+  }
+  for (const label of [null,12,'','   ','a'.repeat(81),'Bad\nName','Hidden\u202eName']) {
+    assert.equal((await request(owner,path+'/comments','POST',{body:'Invalid',is_imported:true,imported_author_label:label})).status,400);
+  }
+  assert.equal((await request(owner,path+'/comments','POST',{body:'Invalid',is_imported:'true'})).status,400);
+  assert.equal((await request(owner,path+'/comments','POST',{body:'Invalid',is_imported:false,imported_author_label:'Fake'})).status,400);
+  await db.query('INSERT INTO forum_saved_posts(user_id,post_id) VALUES($1,$2)',[moderator.user_id,post.post_id]);
+  for (const parent of [null,regular.data.comment_id]) {
+    const named = await request(owner,path+'/comments','POST',{
+      body:'Advice for @admin',mentioned_user_ids:[admin.user_id],parent_comment_id:parent,
+      is_imported:true,imported_author_label:'  Participant B  ',author_id:member.user_id,
+    });
+    assert.equal(named.status,201);
+    assert.equal(named.data.author_id,owner.user_id);
+    assert.equal(named.data.author_username,'Participant B');
+    assert.equal(named.data.author_avatar_url,null);
+    assert.equal(named.data.imported_author_label,'Participant B');
+    for (const recipient of [member,admin,moderator]) {
+      const alerts=(await getNotifications(recipient.user_id)).filter(n=>n.comment_id===named.data.comment_id);
+      assert.ok(alerts.length>0, 'Expected participant/direct, mention and follower notifications');
+      assert.ok(alerts.every(n=>n.actor_username==='Participant B'));
+    }
+    const pulse=(await getCommunityPulse()).activity.find(a=>a.activity_type==='reply'&&a.username==='Participant B');
+    assert.ok(pulse); assert.equal(pulse.avatar_url,null);
+    const edit=await request(owner,path+'/comments/'+named.data.comment_id,'PATCH',{body:'Corrected reply',is_imported:false,imported_author_label:'Changed'});
+    assert.equal(edit.status,200); assert.equal(edit.data.author_username,'Participant B');
+    assert.equal(edit.data.author_avatar_url,null); assert.equal(edit.data.author_id,owner.user_id);
+    assert.equal((await request(admin,path+'/comments/'+named.data.comment_id,'PATCH',{body:'Hijacked'})).status,404);
+    assert.equal((await request(member,path+'/comments/'+named.data.comment_id+'/flag','POST')).status,201);
+    const flaggedReply=(await request(admin,'/moderation/flags')).data.comments.find(c=>c.comment_id===named.data.comment_id);
+    assert.equal(flaggedReply.author_username,'Participant B'); assert.equal(flaggedReply.author_avatar_url,null);
+    const thread=(await request(member,path)).data.comments.find(c=>c.comment_id===named.data.comment_id);
+    assert.equal(thread.author_username,'Participant B'); assert.equal(thread.parent_comment_id,parent);
+    await db.query('SAVEPOINT invalid_comment_import');
+    await assert.rejects(db.query('UPDATE comments SET imported_author_label=NULL WHERE comment_id=$1',[named.data.comment_id]),e=>e.code==='23514');
+    await db.query('ROLLBACK TO SAVEPOINT invalid_comment_import');
+  }
+  const oldComments=(await db.query('SELECT comment_id,body,author_id,parent_comment_id FROM comments ORDER BY comment_id')).rows;
+  const commentMigration=(await fs.readFile(new URL('../db/migrations/028_add_imported_comment_authors.sql',import.meta.url),'utf8')).replace(/^BEGIN;\s*/i,'').replace(/\s*COMMIT;\s*$/i,'');
+  await db.query(commentMigration); await db.query(commentMigration);
+  assert.deepEqual((await db.query('SELECT comment_id,body,author_id,parent_comment_id FROM comments ORDER BY comment_id')).rows,oldComments);
+  const ownerRegular=await request(owner,path+'/comments','POST',{body:'As myself'});
+  assert.equal(ownerRegular.status,201); assert.equal(ownerRegular.data.author_username,'owner');
+  assert.equal(ownerRegular.data.author_avatar_url,owner.avatar_url);
   const normal=await request(owner,'/posts','POST',{category_id:category.category_id,title:'Normal post',body:'Written by me.'});
   assert.equal(normal.status,201);
   const normalThread=(await request(member,`/posts/${normal.data.post_id}`)).data.post;
@@ -97,7 +157,7 @@ try {
   await db.query('SAVEPOINT invalid_import');
   await assert.rejects(db.query("UPDATE posts SET imported_author_label=NULL WHERE post_id=$1",[post.post_id]),e=>e.code==='23514');
   await db.query('ROLLBACK TO SAVEPOINT invalid_import');
-  console.log('PASS: migration/defaults/idempotency, owner-only API and query guard, validation, actual creator, alias/neutral avatar in feed/thread/flags/alerts/pulse, edits, normal posts and unchanged replies.');
+  console.log('PASS: migration/defaults/idempotency, owner-only API and query guard, validation, actual creator, alias/neutral avatar in feed/thread/flags/alerts/pulse, edits, normal posts/comments, owner-only named direct/nested replies, notifications, activity, edits, moderation and comment migration idempotency.');
 } finally {
   if(server)await new Promise(resolve=>server.close(resolve));
   await db.query('ROLLBACK'); await db.end();

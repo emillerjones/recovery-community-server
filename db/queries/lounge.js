@@ -116,18 +116,18 @@ export async function getCommunityPulse() {
     db.query(`
       WITH ${publicActivity}, recent_activity AS (
         SELECT p.created_at, 'post' AS activity_type, p.author_id AS actor_id,
-          p.post_id, p.title
+          p.post_id, p.title, NULL::INT AS comment_id
         FROM public_posts p
         WHERE p.active = TRUE AND p.deleted_at IS NULL
         UNION ALL
-        SELECT c.created_at, 'reply', c.author_id, p.post_id, p.title
+        SELECT c.created_at, 'reply', c.author_id, p.post_id, p.title, c.comment_id
         FROM public_comments c
         JOIN public_posts p ON p.post_id = c.post_id
         WHERE c.active = TRUE AND c.deleted_at IS NULL
           AND p.active = TRUE AND p.deleted_at IS NULL
         UNION ALL
         SELECT reaction.created_at, 'reaction', reaction.user_id,
-          p.post_id, p.title
+          p.post_id, p.title, NULL::INT AS comment_id
         FROM public_reactions reaction
         LEFT JOIN public_comments c ON c.comment_id = reaction.comment_id
         JOIN public_posts p ON p.post_id = COALESCE(reaction.post_id, c.post_id)
@@ -135,12 +135,14 @@ export async function getCommunityPulse() {
       )
       SELECT activity.activity_type, activity.actor_id, activity.post_id,
         activity.title, activity.created_at,
-        CASE WHEN activity.activity_type = 'post' AND p.is_imported
+        CASE WHEN activity.activity_type = 'reply' AND comment.is_imported THEN comment.imported_author_label
+          WHEN activity.activity_type = 'post' AND p.is_imported
           THEN p.imported_author_label ELSE users.username END AS username,
-        CASE WHEN activity.activity_type = 'post' AND p.is_imported THEN NULL ELSE users.avatar_url END AS avatar_url
+        CASE WHEN (activity.activity_type = 'post' AND p.is_imported) OR (activity.activity_type = 'reply' AND comment.is_imported) THEN NULL ELSE users.avatar_url END AS avatar_url
       FROM recent_activity activity
       JOIN users ON users.user_id = activity.actor_id
       JOIN posts p ON p.post_id = activity.post_id
+      LEFT JOIN comments comment ON comment.comment_id = activity.comment_id
       WHERE users.active = TRUE AND users.deleted_at IS NULL AND users.is_system = FALSE
       ORDER BY activity.created_at DESC
       LIMIT 10

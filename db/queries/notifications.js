@@ -12,12 +12,14 @@ export async function createNotification({ userId, actorId, type, postId, commen
       )
       SELECT
         inserted.*,
-        CASE WHEN posts.is_imported AND inserted.type IN ('new_forum_post', 'mention_in_post')
+        CASE WHEN comment.is_imported AND comment.author_id = inserted.actor_id AND inserted.type IN ('reply_to_comment', 'comment_on_participated_post', 'comment_on_followed_post', 'mention_in_comment') THEN comment.imported_author_label
+          WHEN posts.is_imported AND inserted.type IN ('new_forum_post', 'mention_in_post')
           THEN posts.imported_author_label ELSE users.username END AS actor_username,
         posts.title AS post_title
       FROM inserted
       JOIN users ON users.user_id = inserted.actor_id
       LEFT JOIN posts ON posts.post_id = inserted.post_id
+      LEFT JOIN comments comment ON comment.comment_id = inserted.comment_id
     `,
     [userId, actorId, type, postId, commentId]
   );
@@ -115,9 +117,10 @@ export async function createForumParticipantNotifications({ actorId, postId, com
         FROM eligible_recipients
         RETURNING *
       )
-      SELECT inserted.*, actor.username AS actor_username, p.title AS post_title
+      SELECT inserted.*, CASE WHEN comment.is_imported AND comment.author_id = inserted.actor_id THEN comment.imported_author_label ELSE actor.username END AS actor_username, p.title AS post_title
       FROM inserted
       JOIN users actor ON actor.user_id = inserted.actor_id
+      LEFT JOIN comments comment ON comment.comment_id = inserted.comment_id
       JOIN posts p ON p.post_id = inserted.post_id
       ORDER BY inserted.notification_id
     `,
@@ -150,9 +153,10 @@ export async function createDirectReplyNotification({ actorId, postId, parentCom
         FROM recipient
         RETURNING *
       )
-      SELECT inserted.*, actor.username AS actor_username, p.title AS post_title
+      SELECT inserted.*, CASE WHEN comment.is_imported AND comment.author_id = inserted.actor_id THEN comment.imported_author_label ELSE actor.username END AS actor_username, p.title AS post_title
       FROM inserted
       JOIN users actor ON actor.user_id = inserted.actor_id
+      LEFT JOIN comments comment ON comment.comment_id = inserted.comment_id
       JOIN posts p ON p.post_id = inserted.post_id
     `,
     [actorId, postId, parentCommentId, commentId]
@@ -188,9 +192,10 @@ export async function createForumFollowerNotifications({
         FROM eligible_recipients
         RETURNING *
       )
-      SELECT inserted.*, actor.username AS actor_username, p.title AS post_title
+      SELECT inserted.*, CASE WHEN comment.is_imported AND comment.author_id = inserted.actor_id THEN comment.imported_author_label ELSE actor.username END AS actor_username, p.title AS post_title
       FROM inserted
       JOIN users actor ON actor.user_id = inserted.actor_id
+      LEFT JOIN comments comment ON comment.comment_id = inserted.comment_id
       JOIN posts p ON p.post_id = inserted.post_id
       ORDER BY inserted.notification_id
     `,
@@ -223,7 +228,8 @@ export async function getNotifications(userId, limit = 30) {
     `
       SELECT
         n.*,
-        CASE WHEN p.is_imported AND n.type IN ('new_forum_post', 'mention_in_post')
+        CASE WHEN comment.is_imported AND comment.author_id = n.actor_id AND n.type IN ('reply_to_comment', 'comment_on_participated_post', 'comment_on_followed_post', 'mention_in_comment') THEN comment.imported_author_label
+          WHEN p.is_imported AND n.type IN ('new_forum_post', 'mention_in_post')
           THEN p.imported_author_label ELSE u.username END AS actor_username,
         p.title AS post_title,
         CASE
@@ -238,6 +244,7 @@ export async function getNotifications(userId, limit = 30) {
       FROM notifications n
       JOIN users u ON u.user_id = n.actor_id
       LEFT JOIN posts p ON p.post_id = n.post_id
+      LEFT JOIN comments comment ON comment.comment_id = n.comment_id
       WHERE n.user_id = $1
       ORDER BY n.created_at DESC
       LIMIT $2

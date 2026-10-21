@@ -135,6 +135,7 @@ async function notifyMentionedUsers({ mentionedUsers, actorId, postId, commentId
 router.use((req, res, next) => {
   res.set("X-Reaction-Storage", "like");
   res.set("X-Imported-Post-Authors", "1");
+  res.set("X-Imported-Comment-Authors", "1");
   next();
 });
 router.use(requireUser);
@@ -497,6 +498,21 @@ router.post("/posts", async (req, res) => {
 });
 
 router.post("/posts/:id/comments", async (req, res) => {
+  const isImported = req.body.is_imported === true;
+  const rawLabel = req.body.imported_author_label;
+  if ((isImported || rawLabel != null) && req.user.role_id !== 1) {
+    return res.status(403).send({ message: "Only Owners can reply under another name." });
+  }
+  if (req.body.is_imported !== undefined && typeof req.body.is_imported !== "boolean") {
+    return res.status(400).send({ message: "Invalid reply identity." });
+  }
+  const importedAuthorLabel = typeof rawLabel === "string" ? rawLabel.trim() : null;
+  if (isImported && (!importedAuthorLabel || importedAuthorLabel.length > 80 || /[\p{Cc}\p{Cf}]/u.test(importedAuthorLabel))) {
+    return res.status(400).send({ message: "Enter a display name of 1 to 80 characters without control characters." });
+  }
+  if (!isImported && rawLabel != null) {
+    return res.status(400).send({ message: "A display name requires another-name mode." });
+  }
   const postId = Number(req.params.id);
   const body = req.body.body?.trim();
   const parentCommentId = req.body.parent_comment_id == null
@@ -528,6 +544,8 @@ router.post("/posts/:id/comments", async (req, res) => {
       parentCommentId,
       body,
       mediaIds,
+      isImported,
+      importedAuthorLabel,
     });
   } catch (error) {
     if (error.status) return res.status(error.status).send({ message: error.message });
