@@ -204,6 +204,11 @@ try {
   // Real user routes, with all fixtures rolled back after verification.
   await db.query("SAVEPOINT user_management");
   const managed = await createUser("managed@example.com", "managed", "password-123", 100);
+  assert.equal((await getUsers()).find(user => user.user_id === managed.user_id).last_activity_at, null);
+  await db.query(`INSERT INTO analytics_events(user_id, session_id, event_type, page_key, device_type, created_at)
+    VALUES ($1, '00000000-0000-4000-8000-000000000001', 'login', NULL, 'desktop', '2026-01-01T10:00:00Z'),
+           ($1, '00000000-0000-4000-8000-000000000001', 'page_view', 'forum', 'desktop', '2026-01-02T11:00:00Z')`, [managed.user_id]);
+  assert.equal(new Date((await getUsers()).find(user => user.user_id === managed.user_id).last_activity_at).toISOString(), "2026-01-02T11:00:00.000Z");
   const managedPost = await createForumPost({ categoryId: category.category_id,
     authorId: managed.user_id, title: "Preserved history", body: "Keep this record." });
   const app = express();

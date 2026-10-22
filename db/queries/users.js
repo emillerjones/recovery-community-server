@@ -3,7 +3,10 @@ import bcrypt from "bcrypt";
 
 export async function getUsers() {
   const sql = `
-    SELECT * 
+    SELECT users.*,
+      (SELECT MAX(a.created_at) FROM analytics_events a
+       WHERE a.user_id = users.user_id
+         AND a.event_type IN ('login', 'page_view', 'logout')) AS last_activity_at
     FROM users
     WHERE users.deleted_at IS NULL
       AND users.is_system = FALSE
