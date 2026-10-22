@@ -5,6 +5,7 @@ import requireUser from "#middleware/requireUser";
 import { getDiscount2Page, updateDiscount2Page } from "#db/queries/discount2";
 import { prepareDiscountLogo } from "#utils/discountLogo";
 import { uploadDiscountLogo } from "#utils/cloudinary";
+import { applyDiscountEdit } from "#utils/discountEdits";
 
 const router = express.Router();
 const ICONS = new Set(["shirt", "leaf", "cable", "package", "candy"]);
@@ -185,6 +186,20 @@ router.patch("/", requireUser, ownerOnly, async (req, res) => {
   if (!page) {
     return res.status(409).send({ message: "Discount2 changed in another tab. Reload before saving again." });
   }
+  res.send({ content: page.content, revision: page.revision, updatedAt: page.updated_at });
+});
+
+router.patch("/items", requireUser, ownerOnly, async (req, res) => {
+  const revision = req.body?.revision;
+  if (!Number.isSafeInteger(revision) || revision < 1) return res.status(400).send({ message: "A valid saved revision is required." });
+  const saved = await getDiscount2Page();
+  if (!saved) return res.status(404).send({ message: "Discount Links is unavailable." });
+  if (saved.revision !== revision) return res.status(409).send({ message: "Discount Links changed in another tab. Reload before saving again. Your edits are still here." });
+  let content;
+  try { content = validateContent(applyDiscountEdit(saved.content, req.body)); }
+  catch (error) { return res.status(error.status || 400).send({ message: error.message }); }
+  const page = await updateDiscount2Page({ content, revision, updatedBy: req.user.user_id });
+  if (!page) return res.status(409).send({ message: "Discount Links changed in another tab. Reload before saving again. Your edits are still here." });
   res.send({ content: page.content, revision: page.revision, updatedAt: page.updated_at });
 });
 

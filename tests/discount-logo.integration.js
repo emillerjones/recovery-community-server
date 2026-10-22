@@ -96,6 +96,50 @@ try {
   assert.equal(page.content.categories[0].brands[0].logo, "https://example.com/external.png");
   await uploadProtectedImage(png);
   assert.equal(stored.at(-1).options.type, "authenticated", "Community photos remain protected");
+  const read = async () => (await (await fetch(endpoint)).json());
+  const item = async (edit, role = 1, revisionOverride) => fetch(endpoint + "/items", {
+    method: "PATCH", headers: { ...(role ? { "x-test-role": String(role) } : {}), "Content-Type": "application/json" },
+    body: JSON.stringify({ ...edit, revision: revisionOverride ?? (await read()).revision }),
+  });
+  const originalExtras = (await read()).content;
+  const originalBrand = originalExtras.categories[0].brands[0];
+  for (const role of [null, 10, 50, 100]) assert.equal((await item({ action: "delete-brand", categoryId: "brands", brandId: "one" }, role)).status, role ? 403 : 401);
+  const isolatedBrand = { ...originalBrand, note: "Only this brand changed" };
+  assert.equal((await item({ action: "save-brand", categoryId: "brands", brand: isolatedBrand, content: { disclaimer: "Must be ignored" } })).status, 200);
+  let scoped = (await read()).content;
+  assert.deepEqual(scoped.categories[0].brands[0], isolatedBrand);
+  assert.equal(scoped.categories[0].title, originalExtras.categories[0].title);
+  const metadata = { title: "Updated category", description: "Saved details", icon: "leaf", brands: [{ id: "must-not-save" }] };
+  assert.equal((await item({ action: "save-category", categoryId: "brands", category: metadata })).status, 200);
+  scoped = (await read()).content;
+  assert.deepEqual(scoped.categories[0].brands, [isolatedBrand], "Saving category details cannot publish brand drafts");
+  const secondBrand = { ...originalBrand, id: "two", name: "Second brand", logo: null };
+  assert.equal((await item({ action: "save-brand", categoryId: "brands", brand: secondBrand })).status, 200);
+  assert.equal((await item({ action: "save-category", categoryId: "second", category: metadata })).status, 200);
+  assert.deepEqual((await read()).content.categories[1].brands, [], "New categories start with no published brand drafts");
+  assert.equal((await item({ action: "reorder-brands", categoryId: "brands", ids: ["two", "one"] })).status, 200);
+  assert.equal((await item({ action: "reorder-categories", ids: ["second", "brands"] })).status, 200);
+  scoped = (await read()).content;
+  assert.deepEqual(scoped.categories.map(category => category.id), ["second", "brands"]);
+  assert.deepEqual(scoped.categories[1].brands, [secondBrand, isolatedBrand]);
+  assert.deepEqual(scoped.hero, originalExtras.hero); assert.deepEqual(scoped.guide, originalExtras.guide); assert.equal(scoped.disclaimer, originalExtras.disclaimer);
+  const beforeInvalid = await read();
+  for (const edit of [
+    { action: "reorder-categories", ids: ["second", "second"] },
+    { action: "reorder-categories", ids: ["brands"] },
+    { action: "reorder-brands", categoryId: "brands", ids: ["two", "invented"] },
+    { action: "save-brand", categoryId: "brands", brand: { ...isolatedBrand, url: "javascript:alert(1)" } },
+    { action: "save-category", categoryId: "brands", category: { ...metadata, title: "" } },
+    { action: "unknown", categoryId: "brands" },
+  ]) assert.equal((await item(edit)).status, 400);
+  assert.equal((await item({ action: "save-brand", categoryId: "missing", brand: isolatedBrand })).status, 404);
+  assert.deepEqual(await read(), beforeInvalid, "Rejected actions cannot alter content/revision");
+  const oldRevision = beforeInvalid.revision;
+  assert.equal((await item({ action: "delete-brand", categoryId: "brands", brandId: "two" })).status, 200);
+  assert.equal((await item({ action: "delete-category", categoryId: "second" }, 1, oldRevision)).status, 409);
+  assert.equal((await item({ action: "delete-category", categoryId: "second" })).status, 200);
+  assert.equal((await item({ action: "delete-category", categoryId: "brands" })).status, 400);
+  console.log("PASS: scoped brand/category saves, new items, immediate ordering/deletion, preserved unrelated fields, Owner-only access, validation, stale revisions and last-category protection.");
   console.log("PASS: Owner-only logo upload, actual image validation, limits, resize/transparency/metadata, public URL, publish-only changes, links/removal/conflicts/failures, protected photos unchanged.");
 } finally {
   cloudinary.uploader.upload_stream = originalUpload;
