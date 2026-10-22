@@ -104,9 +104,16 @@ export async function getConversationsForUser(userId) {
   return rows;
 }
 
-export async function getMessages(conversationId, limit = 100) {
+/**
+ * Returns the newest `limit` messages in a conversation, oldest first for
+ * display. Pass `beforeMessageId` to page backwards: only messages older than
+ * that message (in the same conversation) are returned.
+ */
+export async function getMessages(conversationId, limit = 100, beforeMessageId = null) {
   const { rows } = await db.query(
     `
+      SELECT *
+      FROM (
       SELECT
         m.*,
         u.username AS sender_username,
@@ -125,10 +132,23 @@ export async function getMessages(conversationId, limit = 100) {
       FROM direct_messages m
       JOIN users u ON u.user_id = m.sender_id
       WHERE m.conversation_id = $1
-      ORDER BY m.created_at, m.message_id
+        AND (
+          $3::INT IS NULL
+          -- A cursor from another conversation matches nothing, so it returns no rows.
+          OR (m.created_at, m.message_id) < (
+            SELECT cursor.created_at, cursor.message_id
+            FROM direct_messages cursor
+            WHERE cursor.message_id = $3 AND cursor.conversation_id = $1
+          )
+        )
+      -- Take the newest rows first so long conversations still show recent
+      -- messages, then flip them back into reading order below.
+      ORDER BY m.created_at DESC, m.message_id DESC
       LIMIT $2
+      ) recent
+      ORDER BY created_at, message_id
     `,
-    [conversationId, limit]
+    [conversationId, limit, beforeMessageId]
   );
   return rows;
 }

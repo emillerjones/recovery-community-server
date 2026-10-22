@@ -55,13 +55,27 @@ router.post("/conversations", async (req, res) => {
   res.status(201).send(conversation);
 });
 
+const FIRST_PAGE_SIZE = 100;
+const OLDER_PAGE_SIZE = 50;
+
 router.get("/conversations/:id/messages", async (req, res) => {
   const conversationId = Number(req.params.id);
+  const before = req.query.before == null ? null : Number(req.query.before);
+  if (before !== null && (!Number.isSafeInteger(before) || before <= 0)) {
+    return res.status(400).send({ message: "Invalid message cursor." });
+  }
+
   const conversation = await getConversationForParticipant(conversationId, req.user.user_id);
   if (!conversation) return res.status(404).send({ message: "Conversation not found." });
 
-  await markConversationRead(conversationId, req.user.user_id);
-  res.send(await getMessages(conversationId));
+  // Only opening the conversation marks it read; paging back through history does not.
+  if (before === null) await markConversationRead(conversationId, req.user.user_id);
+
+  // Ask for one extra row to learn whether older messages remain.
+  const pageSize = before === null ? FIRST_PAGE_SIZE : OLDER_PAGE_SIZE;
+  const rows = await getMessages(conversationId, pageSize + 1, before);
+  const hasMore = rows.length > pageSize;
+  res.send({ messages: hasMore ? rows.slice(1) : rows, has_more: hasMore });
 });
 
 router.post("/conversations/:id/messages", async (req, res) => {
