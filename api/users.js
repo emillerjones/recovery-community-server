@@ -5,7 +5,6 @@ import {
   getUserByEmailAndPassword,
   updateUserRole,
   setUserActive,
-  softDeleteUser,
   updateOwnProfile,
   searchActiveUsersForMention,
 } from "#db/queries/users";
@@ -183,8 +182,7 @@ router.get("/mention-search", async (req, res) => {
  *   import {
  *     updateUserRole,
  *     setUserActive,
- *     softDeleteUser,
- *   } from "#db/queries/users";
+ *    *   } from "#db/queries/users";
  *
  * (combine these into your existing import line from that file
  * rather than adding a second import line)
@@ -265,31 +263,6 @@ router.patch("/:id/active", requireBody(["active"]), async (req, res) => {
   if (!canUseStaffChat(updatedUser)) revokeStaffChat(targetUserId);
   delete updatedUser.password;
   res.send(updatedUser);
-});
-
-// 8. DELETE soft-delete a user
-router.delete("/:id", async (req, res) => {
-  const targetUserId = Number(req.params.id);
-  const actingUser = req.user;
-
-  const targetUser = await getUserById(targetUserId);
-  if (!targetUser) {
-    return res.status(404).send("User not found.");
-  }
-
-  if (targetUser.is_system) {
-    return res.status(403).send("The protected system account cannot be deleted.");
-  }
-
-  if (targetUser.role_id <= actingUser.role_id) {
-    return res
-      .status(403)
-      .send("You do not have permission to delete this user.");
-  }
-
-  const deletedUser = await softDeleteUser(targetUserId);
-  delete deletedUser.password;
-  res.send(deletedUser);
 });
 
 export default router;

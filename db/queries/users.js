@@ -155,25 +155,6 @@ export async function setUserActive(userId, active) {
   return user;
 }
 
-/**
- * Soft-deletes a user by setting deleted_at to the current time.
- * This does NOT remove the row — getUsers() and login already filter
- * out anything where deleted_at IS NOT NULL, so a soft-deleted user
- * effectively disappears from the app without losing their data.
- */
-export async function softDeleteUser(userId) {
-  const sql = `
-    UPDATE users
-    SET deleted_at = NOW(), updated_at = NOW()
-    WHERE user_id = $1 AND deleted_at IS NULL
-    RETURNING *
-  `;
-  const {
-    rows: [user],
-  } = await db.query(sql, [userId]);
-  return user;
-}
-
 /** Updates only the fields a member is allowed to manage on their own profile. */
 export async function updateOwnProfile(userId, { bio, phoneNumber, dateOfBirth, gender, avatarUrl }) {
   return withTransaction(async (client) => {

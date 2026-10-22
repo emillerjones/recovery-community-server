@@ -229,18 +229,18 @@ try {
   });
   for (const role of [1, 10, 50, 100]) {
     assert.equal((await request("/hard", "DELETE", role)).status, 404);
+    assert.equal((await request("", "DELETE", role)).status, 404);
   }
   assert.equal((await request("/hard", "DELETE", 0)).status, 401);
   assert.equal((await request("/active", "PATCH", 100, { active: false })).status, 403);
-  assert.equal((await request("", "DELETE", 100)).status, 403);
+  assert.equal((await request("", "DELETE", 0)).status, 401);
   assert.equal((await request("/active", "PATCH", 1, { active: false })).status, 200);
   assert.equal((await db.query("SELECT active FROM users WHERE user_id = $1", [managed.user_id])).rows[0].active, false);
   assert.equal((await request("/active", "PATCH", 1, { active: true })).status, 200);
   assert.equal((await db.query("SELECT active FROM users WHERE user_id = $1", [managed.user_id])).rows[0].active, true);
-  assert.equal((await request("", "DELETE", 1)).status, 200);
   const retained = (await db.query("SELECT deleted_at FROM users WHERE user_id = $1", [managed.user_id])).rows[0];
-  assert.ok(retained.deleted_at);
-  assert.equal((await getUsers()).some(user => user.user_id === managed.user_id), false);
+  assert.equal(retained.deleted_at, null);
+  assert.equal((await getUsers()).some(user => user.user_id === managed.user_id), true);
   assert.equal((await db.query("SELECT post_id FROM posts WHERE post_id = $1", [managedPost.post_id])).rowCount, 1);
   await new Promise(resolve => server.close(resolve));
   server = null;
