@@ -1,6 +1,10 @@
 import express from "express";
+import multer from "multer";
+import rateLimit from "express-rate-limit";
 import requireUser from "#middleware/requireUser";
 import { getDiscount2Page, updateDiscount2Page } from "#db/queries/discount2";
+import { prepareDiscountLogo } from "#utils/discountLogo";
+import { uploadDiscountLogo } from "#utils/cloudinary";
 
 const router = express.Router();
 const ICONS = new Set(["shirt", "leaf", "cable", "package", "candy"]);
@@ -130,6 +134,34 @@ function ownerOnly(req, res, next) {
   if (req.user.role_id !== 1) return res.status(403).send({ message: "Owner access is required." });
   next();
 }
+
+const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+const logoUploadLimit = rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: "draft-7", legacyHeaders: false });
+
+router.post("/logos", requireUser, ownerOnly, logoUploadLimit, async (req, res) => {
+  try {
+    await new Promise((resolve, reject) => {
+      logoUpload.single("image")(req, res, error => error ? reject(error) : resolve());
+    });
+  } catch (error) {
+    return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).send({
+      message: error.code === "LIMIT_FILE_SIZE" ? "Logos must be 5 MB or smaller." : "Choose one logo image to upload.",
+    });
+  }
+  if (!req.file) return res.status(400).send({ message: "Choose a logo image to upload." });
+  let image;
+  try { image = await prepareDiscountLogo(req.file.buffer); }
+  catch { return res.status(400).send({ message: "Use a valid JPG, PNG, WebP, HEIC, or AVIF image, without animation." }); }
+  try {
+    const stored = await uploadDiscountLogo(image);
+    if (typeof stored.secure_url !== "string" || !stored.secure_url.startsWith("https://")) throw new Error("Missing public logo URL");
+    res.set("Cache-Control", "no-store");
+    res.status(201).send({ url: stored.secure_url });
+  } catch (error) {
+    console.error("Discount logo upload failed:", error.message);
+    res.status(error.status || 502).send({ message: "The logo could not be uploaded. Please try again." });
+  }
+});
 
 router.get("/", async (req, res) => {
   const page = await getDiscount2Page();

@@ -31,6 +31,21 @@ export function uploadProtectedImage(buffer) {
   });
 }
 
+// Public brand logos are intentionally separate from authenticated community
+// photos. Unique asset IDs keep replacing a draft from overwriting a live logo.
+export function uploadDiscountLogo(buffer) {
+  assertConfigured();
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream({
+      resource_type: "image",
+      type: "upload",
+      public_id: `recovery-community/discount-logos/${randomUUID()}`,
+      overwrite: false,
+    }, (error, result) => error ? reject(error) : resolve(result));
+    stream.end(buffer);
+  });
+}
+
 export function protectedImageUrl(publicId, { variant = "full" } = {}) {
   assertConfigured();
   return cloudinary.url(publicId, {
