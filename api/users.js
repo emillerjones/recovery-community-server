@@ -6,7 +6,6 @@ import {
   updateUserRole,
   setUserActive,
   softDeleteUser,
-  hardDeleteTestUser,
   updateOwnProfile,
   searchActiveUsersForMention,
 } from "#db/queries/users";
@@ -266,29 +265,6 @@ router.patch("/:id/active", requireBody(["active"]), async (req, res) => {
   if (!canUseStaffChat(updatedUser)) revokeStaffChat(targetUserId);
   delete updatedUser.password;
   res.send(updatedUser);
-});
-
-// TESTING ONLY: permanently remove an unused signup so the same email can run
-// through standard, personal-invite, and shared-code registration repeatedly.
-router.delete("/:id/hard", async (req, res) => {
-  // This temporary testing tool is owner-only in both the UI and API. The
-  // server check is the real protection; hiding a button alone is never enough.
-  if (req.user.role_id !== 1) {
-    return res.status(403).send({ message: "Owner access is required." });
-  }
-
-  const targetUserId = Number(req.params.id);
-  if (!Number.isInteger(targetUserId) || targetUserId === req.user.user_id) {
-    return res.status(400).send({ message: "That account cannot be permanently deleted here." });
-  }
-
-  const deletedUser = await hardDeleteTestUser(targetUserId);
-  if (!deletedUser) {
-    return res.status(409).send({
-      message: "Hard delete is limited to non-staff test accounts with no posts, comments, or message activity.",
-    });
-  }
-  res.send(deletedUser);
 });
 
 // 8. DELETE soft-delete a user

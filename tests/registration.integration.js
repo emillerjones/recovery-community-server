@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import db from "#db/client";
+import express from "express";
+import usersRouter from "#api/users";
 import {
   createUser,
   getUserByEmailAndPassword,
   getUserByUsername,
   getUsers,
-  hardDeleteTestUser,
   searchActiveUsersForMention,
   updateOwnProfile,
 } from "#db/queries/users";
@@ -50,6 +51,7 @@ function application(overrides = {}) {
   };
 }
 
+let server;
 await db.connect();
 try {
   await db.query("BEGIN");
@@ -146,6 +148,7 @@ try {
   assert.equal(revisionCount, 1);
 
   // Flow 1: standard applicant verifies, becomes pending, then is approved.
+  await db.query("SAVEPOINT signup_flow");
   const standardSecret = createSecureToken();
   const standard = await createRegistration(application({ tokenHash: standardSecret.tokenHash }));
   assert.equal(standard.account_status, "unverified");
@@ -155,8 +158,8 @@ try {
   );
   assert.equal((await reviewApplication(pendingApplication.application_id, owner.user_id, "approved", "")).account_status, "approved");
   await assertWelcomePost(standard.user_id, standard.username, systemUser.user_id, 2);
-  assert.equal((await hardDeleteTestUser(standard.user_id)).email, standard.email);
-  assert.equal((await db.query("SELECT COUNT(*)::INT AS count FROM posts WHERE welcome_member_id = $1", [standard.user_id])).rows[0].count, 0);
+  // Each signup fixture is isolated; cleanup never needs an application delete helper.
+  await db.query("ROLLBACK TO SAVEPOINT signup_flow");
 
   // Flow 2: a private, one-use invitation bypasses manual review after verification.
   const inviteSecret = createSecureToken();
@@ -175,9 +178,9 @@ try {
     "SELECT COUNT(*)::INT AS count FROM email_verification_tokens WHERE user_id = $1", [invited.user_id]
   );
   assert.equal(invitedTokenCount.count, 0);
-  assert.equal((await hardDeleteTestUser(invited.user_id)).email, invited.email);
-  const { rows: [remainingInvite] } = await db.query("SELECT COUNT(*)::INT AS count FROM personal_invites");
-  assert.equal(remainingInvite.count, 0);
+  const { rows: [usedInvite] } = await db.query("SELECT used_at FROM personal_invites WHERE email = $1", [invited.email]);
+  assert.ok(usedInvite.used_at);
+  await db.query("ROLLBACK TO SAVEPOINT signup_flow");
 
   // Flow 3: an active shared code behaves like the invite, and counts its use.
   const readableCode = "FACEBOOK-TEST";
@@ -195,9 +198,49 @@ try {
   await assertWelcomePost(approvedCodedUser.user_id, approvedCodedUser.username, systemUser.user_id, 2);
   const { rows: [code] } = await db.query("SELECT use_count FROM shared_invite_codes");
   assert.equal(code.use_count, 1);
-  assert.equal((await hardDeleteTestUser((await db.query("SELECT user_id FROM users WHERE email = 'coded@example.com'")).rows[0].user_id)).email, "coded@example.com");
-  const { rows: [restoredCode] } = await db.query("SELECT use_count FROM shared_invite_codes");
-  assert.equal(restoredCode.use_count, 0);
+  await db.query("ROLLBACK TO SAVEPOINT signup_flow");
+  await db.query("RELEASE SAVEPOINT signup_flow");
+
+  // Real user routes, with all fixtures rolled back after verification.
+  await db.query("SAVEPOINT user_management");
+  const managed = await createUser("managed@example.com", "managed", "password-123", 100);
+  const managedPost = await createForumPost({ categoryId: category.category_id,
+    authorId: managed.user_id, title: "Preserved history", body: "Keep this record." });
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => {
+    const role = Number(req.get("x-test-role"));
+    if (role) req.user = { ...owner, role_id: role, account_status: "approved", active: true };
+    next();
+  });
+  app.use("/api/users", usersRouter);
+  server = await new Promise(resolve => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  const endpoint = "http://127.0.0.1:" + server.address().port + "/api/users/" + managed.user_id;
+  const request = (suffix, method, role, body) => fetch(endpoint + suffix, {
+    method, headers: { "x-test-role": String(role), "Content-Type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  for (const role of [1, 10, 50, 100]) {
+    assert.equal((await request("/hard", "DELETE", role)).status, 404);
+  }
+  assert.equal((await request("/hard", "DELETE", 0)).status, 401);
+  assert.equal((await request("/active", "PATCH", 100, { active: false })).status, 403);
+  assert.equal((await request("", "DELETE", 100)).status, 403);
+  assert.equal((await request("/active", "PATCH", 1, { active: false })).status, 200);
+  assert.equal((await db.query("SELECT active FROM users WHERE user_id = $1", [managed.user_id])).rows[0].active, false);
+  assert.equal((await request("/active", "PATCH", 1, { active: true })).status, 200);
+  assert.equal((await db.query("SELECT active FROM users WHERE user_id = $1", [managed.user_id])).rows[0].active, true);
+  assert.equal((await request("", "DELETE", 1)).status, 200);
+  const retained = (await db.query("SELECT deleted_at FROM users WHERE user_id = $1", [managed.user_id])).rows[0];
+  assert.ok(retained.deleted_at);
+  assert.equal((await getUsers()).some(user => user.user_id === managed.user_id), false);
+  assert.equal((await db.query("SELECT post_id FROM posts WHERE post_id = $1", [managedPost.post_id])).rowCount, 1);
+  await new Promise(resolve => server.close(resolve));
+  server = null;
+  await db.query("ROLLBACK TO SAVEPOINT user_management");
+  await db.query("RELEASE SAVEPOINT user_management");
 
   // Delete permissions: members/moderators can remove only their own content;
   // owner/admin may remove anyone's. Comment removal recursively soft-deletes
@@ -467,6 +510,7 @@ try {
 
   console.log("Integration test passed: registration, welcome alerts, participant alerts, staff flag alerts, protected system account, edit history, and recursive delete permissions.");
 } finally {
+  if (server) await new Promise(resolve => server.close(resolve));
   await db.query("ROLLBACK");
   await db.end();
 }

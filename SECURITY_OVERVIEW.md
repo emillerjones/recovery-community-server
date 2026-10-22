@@ -253,7 +253,7 @@ Application security also depends on how the system is operated. Before full lau
 - Keep Node.js and dependencies patched.
 - Review dependency vulnerability reports regularly.
 - Restrict Render and Vercel administrator access.
-- Remove the temporary hard-delete testing function before production launch.
+- User Management supports deactivation and soft deletion only; permanent user deletion is not exposed by the application.
 - Add useful security-event logging without logging passwords or usable tokens.
 - Establish a documented response plan for compromised accounts and data incidents.
 
