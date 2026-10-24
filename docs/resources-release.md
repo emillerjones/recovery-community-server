@@ -3,9 +3,15 @@
 The public `/resources` page reads `GET /api/resources`. Owners use
 `/admin/resources-editor` to edit page introductions and parent categories,
 and add, edit, delete, or reorder the resource links inside each category.
-Categories appear in either Learn or Find Support. Saves publish the complete
-draft using the last loaded revision; a concurrent publication returns 409
-without replacing the editor's draft. IDs are stable when titles change.
+All categories appear under Learn. Page text, category details, and each
+resource have separate Save and Discard controls. Reordering saves immediately;
+confirmed deletion removes saved content immediately. New categories must be
+saved before adding children. IDs are stable when titles change.
+
+The editor uses `PATCH /api/resources/items` with one action and the last loaded
+revision. The server applies that action to saved content, never to unrelated
+browser drafts. A concurrent publication returns 409 while preserving unfinished
+edits. The older full-page PATCH endpoint remains compatible with earlier clients.
 
 The server reloads the authenticated account and permits writes only for an
 active, approved Owner (role 1). Anonymous visitors can read public content.

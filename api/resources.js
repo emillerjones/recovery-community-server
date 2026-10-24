@@ -1,6 +1,7 @@
 import express from "express";
 import requireUser from "#middleware/requireUser";
 import { getResourcesPage, updateResourcesPage } from "#db/queries/resources";
+import { applyResourceEdit } from "#utils/resourceEdits";
 
 const router = express.Router();
 
@@ -71,6 +72,22 @@ router.patch("/", requireUser, async (req, res) => {
   catch (error) { return res.status(400).send({ message: error.message }); }
   const page = await updateResourcesPage({ content, revision, updatedBy: req.user.user_id });
   if (!page) return res.status(409).send({ message: "Resources changed in another tab. Your draft is still here. Reload before saving again." });
+  res.send({ content: page.content, revision: page.revision, updatedAt: page.updated_at });
+});
+
+router.patch("/items", requireUser, async (req, res) => {
+  if (req.user.role_id !== 1) return res.status(403).send({ message: "Owner access is required." });
+  const revision = req.body?.revision;
+  if (!Number.isSafeInteger(revision) || revision < 1) return res.status(400).send({ message: "A valid saved revision is required." });
+  const saved = await getResourcesPage();
+  if (!saved) return res.status(404).send({ message: "Resources content is not available." });
+  const conflict = "Resources changed in another tab. Reload before saving again. Your unfinished edits are still here.";
+  if (saved.revision !== revision) return res.status(409).send({ message: conflict });
+  let content;
+  try { content = validateContent(applyResourceEdit(saved.content, req.body)); }
+  catch (error) { return res.status(error.status || 400).send({ message: error.message }); }
+  const page = await updateResourcesPage({ content, revision, updatedBy: req.user.user_id });
+  if (!page) return res.status(409).send({ message: conflict });
   res.send({ content: page.content, revision: page.revision, updatedAt: page.updated_at });
 });
 
