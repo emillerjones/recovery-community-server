@@ -25,7 +25,8 @@
     "test:forum-photos": "node --env-file=.env tests/forum-photos.integration.runner.js",
     "test:profile-avatar": "node --env-file=.env tests/profile-avatar.integration.runner.js",
     "test:faq2": "node --env-file=.env tests/faq2.integration.runner.js",
-    "test:discount2": "node --env-file=.env tests/discount2.integration.runner.js"
+    "test:discount2": "node --env-file=.env tests/discount2.integration.runner.js",
+    "test:resources": "node --env-file=.env tests/resources.integration.runner.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
