@@ -34,8 +34,8 @@ async function sendVerificationEmail(user, token) {
   const link = clientUrl(`/verify-email?token=${encodeURIComponent(token)}`);
   await sendEmail({
     to: user.email,
-    subject: "Verify your Recovery Community email",
-    text: `Hi ${user.username},\n\nVerify your email by opening this link:\n${link}\n\nThis link expires in 24 hours.`,
+    subject: "Verify your email for Recovery With The Exit Drug",
+    text: `Hi ${user.username},\n\nYou requested an account with Recovery With The Exit Drug. Confirm your email address to continue your registration:\n\n${link}\n\nThis link expires in 24 hours and can be used once. If you request another verification email, use the newest link.\n\nIf you did not request this account, you can ignore this email.\n\nRecovery With The Exit Drug`,
   });
 }
 
