@@ -20,6 +20,7 @@ import mediaRouter from "#api/media";
 import faq2Router from "#api/faq2";
 import discount2Router from "#api/discount2";
 import resourcesRouter from "#api/resources";
+import homeTestRouter from "#api/homeTest";
 
 // Render sits in front of Express as one trusted proxy. This lets rate limiting
 // use the visitor IP from X-Forwarded-For instead of rejecting the proxy header.
@@ -46,6 +47,7 @@ app.use("/api/media", mediaRouter);
 app.use("/api/faq2", faq2Router);
 app.use("/api/discount2", discount2Router);
 app.use("/api/resources", resourcesRouter);
+app.use("/api/home-test", homeTestRouter);
 
 
 app.use((err, req, res, next) => {
