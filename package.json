@@ -27,7 +27,8 @@
     "test:faq2": "node --env-file=.env tests/faq2.integration.runner.js",
     "test:discount2": "node --env-file=.env tests/discount2.integration.runner.js",
     "test:resources": "node --env-file=.env tests/resources.integration.runner.js",
-    "test:home-test": "node --env-file=.env tests/home-test.integration.runner.js"
+    "test:home-test": "node --env-file=.env tests/home-test.integration.runner.js",
+    "test:guidelines": "node --env-file=.env tests/guidelines.integration.runner.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
