@@ -20,6 +20,7 @@ import mediaRouter from "#api/media";
 import faq2Router from "#api/faq2";
 import discount2Router from "#api/discount2";
 import resourcesRouter from "#api/resources";
+import ourStoryRouter from "#api/ourStory";
 import homeTestRouter from "#api/homeTest";
 import guidelinesRouter from "#api/guidelines";
 
@@ -49,6 +50,7 @@ app.use("/api/faq2", faq2Router);
 app.use("/api/discount2", discount2Router);
 app.use("/api/resources", resourcesRouter);
 app.use("/api/home-test", homeTestRouter);
+app.use("/api/ourstory", ourStoryRouter);
 app.use("/api/guidelines", guidelinesRouter);
 
 
