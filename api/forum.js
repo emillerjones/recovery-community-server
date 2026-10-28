@@ -136,7 +136,7 @@ router.use((req, res, next) => {
   res.set("X-Reaction-Storage", "like");
   res.set("X-Imported-Post-Authors", "1");
   res.set("X-Imported-Comment-Authors", "1");
-  res.set("X-Forum-Report-Reasons", "3");
+  res.set("X-Forum-Report-Reasons", "4");
   next();
 });
 router.use(requireUser);

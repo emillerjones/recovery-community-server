@@ -82,6 +82,14 @@ try {
   assert.equal((await db.query('SELECT COUNT(*)::int n FROM notifications WHERE type IN (\'flagged_post\',\'flagged_comment\')')).rows[0].n,10);
   assert.equal((await request(moderator,'/moderation/flags/posts/'+post.post_id+'/review','PATCH')).status,200);
   assert.equal((await request(owner,'/moderation/flags')).data.posts.length,0);
+  assert.equal((await request(moderator, path, 'DELETE')).status, 404);
+  assert.equal((await request(moderator, commentPath, 'DELETE')).status, 404);
+  assert.equal((await request(reader, path+'/flag', 'POST', {reason:'Another report'})).status, 201);
+  assert.equal((await request(admin, commentPath, 'DELETE')).status, 200);
+  assert.equal((await request(owner,'/moderation/flags')).data.comments.length, 0, 'Deleted comments and nested replies leave the queue');
+  assert.equal((await db.query('SELECT COUNT(*)::int n FROM comments WHERE post_id=$1 AND deleted_at IS NOT NULL', [post.post_id])).rows[0].n, 2);
+  assert.equal((await request(owner, path, 'DELETE')).status, 200);
+  assert.equal((await request(owner,'/moderation/flags')).data.posts.length, 0, 'Deleted posts leave the queue');
   console.log('PASS reports: reason validation, self/duplicate restrictions, nested replies, all reporting roles, staff-only reporter details, notifications, visible content, review.');
 
 } finally {

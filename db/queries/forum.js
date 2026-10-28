@@ -922,7 +922,8 @@ export async function getFlaggedForumPosts() {
     JOIN users reporter ON reporter.user_id = flags.flagged_by
     JOIN posts p ON p.post_id = flags.post_id
     JOIN users u ON u.user_id = p.author_id
-    WHERE flags.post_id IS NOT NULL
+    WHERE p.active = TRUE AND p.deleted_at IS NULL
+      AND flags.post_id IS NOT NULL
       AND flags.reviewed_at IS NULL
     GROUP BY p.post_id, u.username, u.avatar_url
     ORDER BY flag_count DESC, last_flagged_at DESC
@@ -950,8 +951,10 @@ export async function getFlaggedForumComments() {
     FROM forum_content_flags flags
     JOIN users reporter ON reporter.user_id = flags.flagged_by
     JOIN comments cm ON cm.comment_id = flags.comment_id
+    JOIN posts p ON p.post_id = cm.post_id
     JOIN users u ON u.user_id = cm.author_id
-    WHERE flags.comment_id IS NOT NULL
+    WHERE cm.active = TRUE AND cm.deleted_at IS NULL AND p.active = TRUE AND p.deleted_at IS NULL
+      AND flags.comment_id IS NOT NULL
       AND flags.reviewed_at IS NULL
     GROUP BY cm.comment_id, u.username, u.avatar_url
     ORDER BY flag_count DESC, last_flagged_at DESC
