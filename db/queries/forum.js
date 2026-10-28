@@ -906,7 +906,7 @@ export async function getFlaggedForumPosts() {
     SELECT
       p.post_id,
       p.title,
-      p.created_at,
+      p.created_at AT TIME ZONE 'UTC' AS created_at,
       p.body,
       p.author_id,
       p.is_imported,
@@ -914,9 +914,9 @@ export async function getFlaggedForumPosts() {
       CASE WHEN p.is_imported THEN p.imported_author_label ELSE u.username END AS author_username,
       CASE WHEN p.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
       COUNT(flags.flag_id)::INT AS flag_count,
-      MAX(flags.created_at) AS last_flagged_at,
+      MAX(flags.created_at) AT TIME ZONE 'UTC' AS last_flagged_at,
       jsonb_agg(jsonb_build_object('flag_id', flags.flag_id, 'reporter_id', reporter.user_id,
-        'reporter_username', reporter.username, 'reporter_avatar_url', reporter.avatar_url, 'reason', flags.reason, 'created_at', flags.created_at)
+        'reporter_username', reporter.username, 'reporter_avatar_url', reporter.avatar_url, 'reason', flags.reason, 'created_at', flags.created_at AT TIME ZONE 'UTC')
         ORDER BY flags.created_at, flags.flag_id) AS reports
     FROM forum_content_flags flags
     JOIN users reporter ON reporter.user_id = flags.flagged_by
@@ -934,17 +934,18 @@ export async function getFlaggedForumComments() {
   const { rows } = await db.query(`
     SELECT
       cm.comment_id,
-      cm.created_at,
+      cm.created_at AT TIME ZONE 'UTC' AS created_at,
       cm.parent_comment_id,
+      cm.is_imported,
       cm.post_id,
       cm.body,
       cm.author_id,
       CASE WHEN cm.is_imported THEN cm.imported_author_label ELSE u.username END AS author_username,
       CASE WHEN cm.is_imported THEN NULL ELSE u.avatar_url END AS author_avatar_url,
       COUNT(flags.flag_id)::INT AS flag_count,
-      MAX(flags.created_at) AS last_flagged_at,
+      MAX(flags.created_at) AT TIME ZONE 'UTC' AS last_flagged_at,
       jsonb_agg(jsonb_build_object('flag_id', flags.flag_id, 'reporter_id', reporter.user_id,
-        'reporter_username', reporter.username, 'reporter_avatar_url', reporter.avatar_url, 'reason', flags.reason, 'created_at', flags.created_at)
+        'reporter_username', reporter.username, 'reporter_avatar_url', reporter.avatar_url, 'reason', flags.reason, 'created_at', flags.created_at AT TIME ZONE 'UTC')
         ORDER BY flags.created_at, flags.flag_id) AS reports
     FROM forum_content_flags flags
     JOIN users reporter ON reporter.user_id = flags.flagged_by

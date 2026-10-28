@@ -62,11 +62,15 @@ try {
   const reply=(await db.query("INSERT INTO comments(post_id,parent_comment_id,author_id,body) VALUES($1,$2,$3,'Nested reply') RETURNING *",[post.post_id,comment.comment_id,reader.user_id])).rows[0];
   assert.equal((await request(author,path+'/comments/'+reply.comment_id+'/flag','POST',{reason:'Nested report'})).status,201);
   for (const member of [reader,author]) assert.equal((await request(member,'/moderation/flags')).status,403);
+  await db.query("UPDATE forum_content_flags SET created_at = '2026-10-28 15:45:42'::timestamp WHERE post_id=$1 AND flagged_by=$2", [post.post_id, reader.user_id]);
   for (const staff of [owner,admin,moderator]) {
     const queue=await request(staff,'/moderation/flags');assert.equal(queue.status,200);
     assert.equal(queue.data.posts[0].reports.length,2);
     assert.equal(queue.data.posts[0].reports[0].reason,'Please review this post.');
     assert.equal(queue.data.posts[0].reports[0].reporter_username,reader.username);
+    assert.equal(new Date(queue.data.posts[0].reports[0].created_at).toISOString(), '2026-10-28T15:45:42.000Z');
+    assert.equal(new Intl.DateTimeFormat('en-US', { timeZone:'America/Chicago', hour:'numeric', minute:'2-digit' }).format(new Date(queue.data.posts[0].reports[0].created_at)), '10:45 AM');
+    for (const report of queue.data.comments.flatMap(item => item.reports)) assert.match(report.created_at, /(?:Z|\+00:00)$/);
     assert.ok(queue.data.posts[0].created_at);
     assert.ok(Object.hasOwn(queue.data.posts[0].reports[0], 'reporter_avatar_url'));
     assert.ok(queue.data.comments.every(item => Object.hasOwn(item, 'parent_comment_id') && item.created_at));
