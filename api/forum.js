@@ -134,8 +134,8 @@ async function notifyMentionedUsers({ mentionedUsers, actorId, postId, commentId
 // Public deployment marker: release checks need no account or privileged token.
 router.use((req, res, next) => {
   res.set("X-Reaction-Storage", "like");
-  res.set("X-Imported-Post-Authors", "1");
-  res.set("X-Imported-Comment-Authors", "1");
+  res.set("X-Imported-Post-Authors", "2");
+  res.set("X-Imported-Comment-Authors", "2");
   res.set("X-Forum-Report-Reasons", "4");
   next();
 });
@@ -383,8 +383,8 @@ router.post("/posts", async (req, res) => {
 
   const isImported = req.body.is_imported === true;
   const rawLabel = req.body.imported_author_label;
-  if ((isImported || rawLabel != null) && req.user.role_id !== 1) {
-    return res.status(403).send({ message: "Only the Owner can publish imported posts." });
+  if ((isImported || rawLabel != null) && ![1, 10].includes(req.user.role_id)) {
+    return res.status(403).send({ message: "Only Owners and Administrators can publish imported posts." });
   }
   if (req.body.is_imported !== undefined && typeof req.body.is_imported !== "boolean") {
     return res.status(400).send({ message: "Choose Myself or Imported name." });
@@ -501,8 +501,8 @@ router.post("/posts", async (req, res) => {
 router.post("/posts/:id/comments", async (req, res) => {
   const isImported = req.body.is_imported === true;
   const rawLabel = req.body.imported_author_label;
-  if ((isImported || rawLabel != null) && req.user.role_id !== 1) {
-    return res.status(403).send({ message: "Only Owners can reply under another name." });
+  if ((isImported || rawLabel != null) && ![1, 10].includes(req.user.role_id)) {
+    return res.status(403).send({ message: "Only Owners and Administrators can reply under another name." });
   }
   if (req.body.is_imported !== undefined && typeof req.body.is_imported !== "boolean") {
     return res.status(400).send({ message: "Invalid reply identity." });

@@ -526,7 +526,7 @@ export async function createForumPost({
          AND active = TRUE
          AND (slug <> 'announcements' OR $5 = TRUE)
          AND (NOT $6 OR EXISTS (
-           SELECT 1 FROM users owner WHERE owner.user_id = $2 AND owner.role_id = 1
+           SELECT 1 FROM users owner WHERE owner.user_id = $2 AND owner.role_id IN (1,10)
              AND owner.active = TRUE AND owner.deleted_at IS NULL
              AND owner.account_status = 'approved' AND owner.is_system = FALSE
          ))
@@ -581,7 +581,7 @@ export async function createForumComment({ postId, authorId, parentCommentId, bo
            AND p.active = TRUE
            AND p.deleted_at IS NULL
            AND p.locked = FALSE
-           AND (NOT $5 OR EXISTS (SELECT 1 FROM users creator WHERE creator.user_id = $2 AND creator.role_id = 1))
+           AND (NOT $5 OR EXISTS (SELECT 1 FROM users creator WHERE creator.user_id = $2 AND creator.role_id IN (1,10) AND creator.active = TRUE AND creator.deleted_at IS NULL AND creator.account_status = 'approved' AND creator.is_system = FALSE))
          RETURNING *
        )
        SELECT inserted.*, CASE WHEN inserted.is_imported THEN inserted.imported_author_label ELSE u.username END AS author_username,

@@ -54,7 +54,7 @@ try {
   }
   const input={category_id:category.category_id,audience:'members',title:'Imported discussion',body:'An archived discussion.',is_imported:true,imported_author_label:'  Participant A  ',author_id:member.user_id};
   assert.equal((await request(null,'/posts','POST',input)).status,401);
-  for(const actor of [admin,moderator,member]) {
+  for(const actor of [moderator,member]) {
     assert.equal((await request(actor,'/posts','POST',input)).status,403);
     assert.equal((await request(actor,'/posts','POST',{...input,is_imported:false})).status,403);
     assert.equal(await createForumPost({categoryId:category.category_id,authorId:actor.user_id,title:'Denied',body:'Denied',isImported:true,importedAuthorLabel:'Alias'}),undefined);
@@ -80,7 +80,7 @@ try {
   assert.ok(notifications.length>0); assert.ok(notifications.every(n=>n.actor_username==='Participant A'));
   const activity=(await getCommunityPulse()).activity.find(a=>a.post_id===post.post_id&&a.activity_type==='post');
   assert.equal(activity.username,'Participant A'); assert.equal(activity.avatar_url,null);
-  assert.equal((await request(member,path+'/flag','POST')).status,201);
+  assert.equal((await request(member,path+'/flag','POST',{reason:'Please review this imported post.'})).status,201);
   const flagged=(await request(admin,'/moderation/flags')).data.posts.find(p=>p.post_id===post.post_id);
   assert.equal(flagged.author_username,'Participant A'); assert.equal(flagged.author_avatar_url,null);
   assert.equal((await request(member,path,'PATCH',{body:'Hijacked'})).status,404);
@@ -99,7 +99,7 @@ try {
   await db.query(freshCommentMigration); await db.query(freshCommentMigration);
   assert.deepEqual((await db.query('SELECT * FROM comments ORDER BY comment_id')).rows,legacyComments);
 
-  for (const actor of [admin,moderator,member]) {
+  for (const actor of [moderator,member]) {
     for (const parent of [null,regular.data.comment_id]) {
       assert.equal((await request(actor,path+'/comments','POST',{body:'Denied',parent_comment_id:parent,is_imported:true,imported_author_label:'Fake'})).status,403);
       assert.equal((await request(actor,path+'/comments','POST',{body:'Denied',parent_comment_id:parent,imported_author_label:'Fake'})).status,403);
@@ -133,7 +133,7 @@ try {
     assert.equal(edit.status,200); assert.equal(edit.data.author_username,'Participant B');
     assert.equal(edit.data.author_avatar_url,null); assert.equal(edit.data.author_id,owner.user_id);
     assert.equal((await request(admin,path+'/comments/'+named.data.comment_id,'PATCH',{body:'Hijacked'})).status,404);
-    assert.equal((await request(member,path+'/comments/'+named.data.comment_id+'/flag','POST')).status,201);
+    assert.equal((await request(member,path+'/comments/'+named.data.comment_id+'/flag','POST',{reason:'Please review this imported reply.'})).status,201);
     const flaggedReply=(await request(admin,'/moderation/flags')).data.comments.find(c=>c.comment_id===named.data.comment_id);
     assert.equal(flaggedReply.author_username,'Participant B'); assert.equal(flaggedReply.author_avatar_url,null);
     const thread=(await request(member,path)).data.comments.find(c=>c.comment_id===named.data.comment_id);
@@ -157,7 +157,21 @@ try {
   await db.query('SAVEPOINT invalid_import');
   await assert.rejects(db.query("UPDATE posts SET imported_author_label=NULL WHERE post_id=$1",[post.post_id]),e=>e.code==='23514');
   await db.query('ROLLBACK TO SAVEPOINT invalid_import');
-  console.log('PASS: migration/defaults/idempotency, owner-only API and query guard, validation, actual creator, alias/neutral avatar in feed/thread/flags/alerts/pulse, edits, normal posts/comments, owner-only named direct/nested replies, notifications, activity, edits, moderation and comment migration idempotency.');
+
+  const adminPost=await request(admin,'/posts','POST',{...input,imported_author_label:'Admin imported author'});
+  assert.equal(adminPost.status,201);assert.equal(adminPost.data.author_id,admin.user_id);
+  for(const parent of [null,regular.data.comment_id]) {
+    const result=await request(admin,path+'/comments','POST',{body:'Admin imported reply',parent_comment_id:parent,is_imported:true,imported_author_label:'Admin alias',author_id:owner.user_id});
+    assert.equal(result.status,201);assert.equal(result.data.author_id,admin.user_id);assert.equal(result.data.author_username,'Admin alias');
+    assert.equal((await request(admin,path+'/comments/'+result.data.comment_id,'PATCH',{body:'My corrected imported reply'})).status,200);
+  }
+  const adminNormal=await request(admin,path+'/comments','POST',{body:'Admin as myself'});
+  assert.equal(adminNormal.status,201);assert.equal(adminNormal.data.author_username,admin.username);
+  await db.query('UPDATE users SET role_id=50 WHERE user_id=$1',[admin.user_id]);
+  assert.equal(await createForumPost({categoryId:category.category_id,authorId:admin.user_id,title:'Denied after demotion',body:'Denied',isImported:true,importedAuthorLabel:'Fake'}),undefined);
+  assert.equal(await createForumComment({postId:post.post_id,authorId:admin.user_id,body:'Denied after demotion',isImported:true,importedAuthorLabel:'Fake'}),undefined);
+  await db.query('UPDATE users SET role_id=10 WHERE user_id=$1',[admin.user_id]);
+  console.log('PASS: migration/defaults/idempotency, Owner/Admin API and query guard, validation, actual creator, alias/neutral avatar in feed/thread/flags/alerts/pulse, edits, normal posts/comments, Owner/Admin named direct/nested replies, notifications, activity, edits, moderation and comment migration idempotency.');
 } finally {
   if(server)await new Promise(resolve=>server.close(resolve));
   await db.query('ROLLBACK'); await db.end();
