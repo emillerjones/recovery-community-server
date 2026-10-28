@@ -136,6 +136,7 @@ router.use((req, res, next) => {
   res.set("X-Reaction-Storage", "like");
   res.set("X-Imported-Post-Authors", "1");
   res.set("X-Imported-Comment-Authors", "1");
+  res.set("X-Forum-Report-Reasons", "1");
   next();
 });
 router.use(requireUser);
@@ -747,7 +748,11 @@ router.patch("/posts/:id/moderation", async (req, res) => {
 
 router.post("/posts/:id/flag", async (req, res) => {
   const postId = Number(req.params.id);
-  const reason = req.body.reason?.trim() || null;
+  const input = req.body?.reason;
+  if (typeof input !== "string" || !input.trim() || input.trim().length > 1000) {
+    return res.status(400).send({ message: "Please explain your report using 1 to 1,000 characters." });
+  }
+  const reason = input.trim();
 
   const flag = await flagForumPost(postId, req.user.user_id, reason);
   if (!flag) return res.status(400).send({ message: "This content cannot be flagged or is already flagged by you." });
@@ -874,7 +879,11 @@ router.delete("/posts/:id/comments/:commentId/reaction", async (req, res) => {
 
 router.post("/posts/:id/comments/:commentId/flag", async (req, res) => {
   const commentId = Number(req.params.commentId);
-  const reason = req.body.reason?.trim() || null;
+  const input = req.body?.reason;
+  if (typeof input !== "string" || !input.trim() || input.trim().length > 1000) {
+    return res.status(400).send({ message: "Please explain your report using 1 to 1,000 characters." });
+  }
+  const reason = input.trim();
 
   const flag = await flagForumComment(commentId, req.user.user_id, reason);
   if (!flag) return res.status(400).send({ message: "This content cannot be flagged or is already flagged by you." });
