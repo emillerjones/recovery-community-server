@@ -7,15 +7,15 @@ const router = express.Router();
 
 router.get("/", async (req, res) => {
   const page = await getHomeTestPage();
-  if (!page) return res.status(404).send({ message: "Home - Test content is not available." });
-  res.set({ "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
+  if (!page) return res.status(404).send({ message: "Home content is not available." });
+  res.set({ "Cache-Control": "no-store" });
   res.send({ content: page.content, revision: page.revision, sections: HOME_TEST_SECTIONS });
 });
 
 router.patch("/sections/:sectionId", requireUser, async (req, res) => {
   if (req.user.role_id !== 1) return res.status(403).send({ message: "Owner access is required." });
   const section = HOME_TEST_SECTIONS.find(item => item.id === req.params.sectionId);
-  if (!section) return res.status(400).send({ message: "Choose an existing Home - Test section." });
+  if (!section) return res.status(400).send({ message: "Choose an existing Home section." });
   const revision = req.body?.revision;
   if (!Number.isSafeInteger(revision) || revision < 1) return res.status(400).send({ message: "A valid saved revision is required." });
   const input = req.body?.fields;
@@ -32,8 +32,8 @@ router.patch("/sections/:sectionId", requireUser, async (req, res) => {
     fields[field.key] = value.trim();
   }
   const saved = await getHomeTestPage();
-  if (!saved) return res.status(404).send({ message: "Home - Test content is not available." });
-  const conflict = "Home - Test changed in another tab. Reload before saving again. Your unfinished edits are still here.";
+  if (!saved) return res.status(404).send({ message: "Home content is not available." });
+  const conflict = "Home changed in another tab. Reload before saving again. Your unfinished edits are still here.";
   if (saved.revision !== revision) return res.status(409).send({ message: conflict });
   // Only this section changes. Ignore unrelated drafts or content in the request.
   const content = { ...saved.content, [section.id]: fields };

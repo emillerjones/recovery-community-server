@@ -49,6 +49,8 @@ app.use("/api/media", mediaRouter);
 app.use("/api/faq2", faq2Router);
 app.use("/api/discount2", discount2Router);
 app.use("/api/resources", resourcesRouter);
+app.use("/api/home", homeTestRouter);
+// Compatibility for clients opened before the Home editor was renamed.
 app.use("/api/home-test", homeTestRouter);
 app.use("/api/ourstory", ourStoryRouter);
 app.use("/api/guidelines", guidelinesRouter);

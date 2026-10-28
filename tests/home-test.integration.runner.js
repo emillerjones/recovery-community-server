@@ -24,11 +24,11 @@ try {
   await db.query(migration);
   server = http.createServer(app);
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  const endpoint = `http://127.0.0.1:${server.address().port}/api/home-test`;
+  const endpoint = `http://127.0.0.1:${server.address().port}/api/home`;
   const response = await fetch(endpoint);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.equal(response.headers.get("x-robots-tag"), "noindex, nofollow");
+  assert.equal(response.headers.get("x-robots-tag"), null);
   let saved = await response.json();
   assert.deepEqual(saved.content, HOME_TEST_INITIAL_CONTENT);
   assert.deepEqual(saved.sections, HOME_TEST_SECTIONS);
