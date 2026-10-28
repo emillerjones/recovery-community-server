@@ -67,6 +67,9 @@ try {
     assert.equal(queue.data.posts[0].reports.length,2);
     assert.equal(queue.data.posts[0].reports[0].reason,'Please review this post.');
     assert.equal(queue.data.posts[0].reports[0].reporter_username,reader.username);
+    assert.ok(queue.data.posts[0].created_at);
+    assert.ok(Object.hasOwn(queue.data.posts[0].reports[0], 'reporter_avatar_url'));
+    assert.ok(queue.data.comments.every(item => Object.hasOwn(item, 'parent_comment_id') && item.created_at));
     assert.equal(queue.data.comments.length,2);
   }
   const detail=await request(reader,path);assert.equal(detail.status,200);
