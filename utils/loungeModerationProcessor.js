@@ -1,7 +1,9 @@
-import { moderationConfig, evaluateResponse } from './loungeModerationConfig.js';
+import { evaluateResponse } from './loungeModerationConfig.js';
+import { effectiveModerationConfig } from './loungeModerationState.js';
 import { claimJob, completeJob, failJob, getJobMessage, purgeModerationData, reconcileJobs, supersedeJob } from '#db/queries/loungeModeration';
 
-export async function processModerationJob({ fetchImpl=fetch, config=moderationConfig() }={}) {
+export async function processModerationJob({ fetchImpl=fetch, config }={}) {
+  config ??= await effectiveModerationConfig();
   if (!config.enabled) return false;
   const job = await claimJob();
   if (!job) return false;
@@ -34,11 +36,12 @@ export function startModerationProcessor() {
     let worked=false;
     try {
       if (Date.now()-lastPurge>60*60*1000) { await purgeModerationData(); lastPurge=Date.now(); }
-      const config=moderationConfig();
+      const config=await effectiveModerationConfig();
       if (config.enabled) {
         if (Date.now()-lastReconcile>60_000) { await reconcileJobs(); lastReconcile=Date.now(); }
         // One request at a time per server. Database leases also protect multiple instances.
-        worked=await processModerationJob({config});
+        // Re-read the Owner setting before each job; never cache it across cycles.
+        worked=await processModerationJob();
       }
     } catch { console.error('Lounge moderation background cycle failed; retrying later.'); }
     if (!stopped) { timer=setTimeout(tick,worked?1000:15_000); timer.unref(); }

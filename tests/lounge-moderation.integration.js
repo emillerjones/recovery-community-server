@@ -9,6 +9,7 @@ const {moderationConfig,DEFAULT_THRESHOLDS,evaluateResponse}=await import('../ut
 const {processModerationJob}=await import('../utils/loungeModerationProcessor.js');
 const {default:router}=await import('../api/loungeModeration.js');
 const {default:lounge}=await import('../api/lounge.js');
+const {effectiveModerationConfig}=await import('../utils/loungeModerationState.js');
 const schema=`test_lounge_ai_${randomUUID().replaceAll('-','')}`;
 let server;
 await db.connect();
@@ -24,6 +25,7 @@ try {
   const historical=await message('Historical message');
   await db.query((await fs.readFile(new URL('../db/migrations/033_add_lounge_moderation.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   await db.query((await fs.readFile(new URL('../db/migrations/033_add_lounge_moderation.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
+  for(let i=0;i<2;i++)await db.query((await fs.readFile(new URL('../db/migrations/034_add_lounge_moderation_settings.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   assert.equal((await db.query('SELECT COUNT(*)::INT n FROM moderation_jobs')).rows[0].n,0);
   assert.equal(moderationConfig({}).enabled,false);
   assert.equal(moderationConfig({LOUNGE_MODERATION_MODE:'testing',OPENAI_API_KEY:'test'}).enabled,true);
@@ -56,6 +58,48 @@ try {
     assert.equal((await request(null,path)).status,401);assert.equal((await request(member,path)).status,403);
   }
   for(const staff of [mod,admin,owner])assert.equal((await request(staff)).status,200);
+  // Global controls are Owner-only, validated, audited, and revision protected.
+  assert.equal((await request(null,'/settings')).status,401);
+  for(const denied of [member,mod,admin]){
+    assert.equal((await request(denied,'/settings')).status,403);
+    assert.equal((await request(denied,'/settings','PATCH',{enabled:true,revision:1})).status,403);
+  }
+  for(const body of [{},{enabled:'true',revision:1},{enabled:true},{enabled:true,revision:-1},{enabled:true,revision:1.2}])assert.equal((await request(owner,'/settings','PATCH',body)).status,400);
+  assert.equal((await request(owner,'/settings')).data.processing.ownerEnabled,false);
+  assert.equal((await request(owner,'/settings','PATCH',{enabled:true,revision:1})).status,200);
+  assert.equal((await request(owner,'/settings','PATCH',{enabled:false,revision:1})).status,409,'Stale Owner form cannot overwrite current setting');
+  let settings=(await request(owner,'/settings')).data;
+  assert.equal(settings.processing.ownerEnabled,true);assert.equal(settings.processing.settingsRevision,2);
+  assert.equal(settings.history.length,1);assert.equal(settings.history[0].changed_by_username,'owner');
+  assert.equal((await request(owner,'/settings','PATCH',{enabled:true,revision:2})).status,200,'No-op is idempotent');
+  assert.equal((await request(owner,'/settings')).data.history.length,1);
+  const priorMode=process.env.LOUNGE_MODERATION_MODE,priorKey=process.env.OPENAI_API_KEY;
+  try{
+    process.env.LOUNGE_MODERATION_MODE='off';process.env.OPENAI_API_KEY='mock';
+    assert.equal((await effectiveModerationConfig()).enabled,false,'Render off overrides Owner enabled');
+    process.env.LOUNGE_MODERATION_MODE='testing';
+    assert.equal((await effectiveModerationConfig()).enabled,true);
+    delete process.env.OPENAI_API_KEY;assert.equal((await effectiveModerationConfig()).enabled,false,'Missing key prevents processing');
+    process.env.OPENAI_API_KEY='mock';
+    await request(owner,'/settings','PATCH',{enabled:false,revision:2});
+    const beforeCalls=calls;
+    assert.equal(await processModerationJob({fetchImpl:mockFetch}),false,'Default processor respects Owner pause');assert.equal(calls,beforeCalls);
+    assert.equal((await effectiveModerationConfig()).enabled,false);
+    settings=(await request(owner,'/settings')).data;
+    assert.equal(settings.history.length,2);assert.equal(settings.history[0].enabled,false);assert.equal(settings.processing.settingsRevision,3);
+    // Check the actual default worker path picks up saved changes without restart.
+    const settingsJob=await message('Owner-enabled worker check');
+    await request(owner,'/settings','PATCH',{enabled:true,revision:3});
+    let workerCalls=0;
+    assert.equal(await processModerationJob({fetchImpl:async()=>{workerCalls++;return {ok:true,json:async()=>response(true,.01)};}}),true);
+    assert.equal(workerCalls,1);
+    assert.equal((await db.query('SELECT status FROM moderation_jobs WHERE message_id=$1',[settingsJob.message_id])).rows[0].status,'completed');
+    await request(owner,'/settings','PATCH',{enabled:false,revision:4});
+    assert.equal(await processModerationJob({fetchImpl:mockFetch}),false);
+  }finally{
+    if(priorMode===undefined)delete process.env.LOUNGE_MODERATION_MODE;else process.env.LOUNGE_MODERATION_MODE=priorMode;
+    if(priorKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=priorKey;
+  }
   assert.equal((await request(mod,'?page=-1')).status,400);
   assert.equal((await request(mod,`/results/${result.result_id}/review`,'POST',{action:'delete'})).status,403);
   assert.equal((await request(mod,`/results/${result.result_id}/review`,'POST',{action:'clear'})).status,200);

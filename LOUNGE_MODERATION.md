@@ -6,16 +6,26 @@ There is currently no Lounge editing UI; the database hooks cover future body ed
 
 ## Deploy and enable
 
-1. Verify a custom-format database backup and apply migration 033 before releasing
-   the server. The migration leaves every existing message at revision zero.
+1. Verify a custom-format database backup and apply migrations 033 and 034 before
+   releasing the server. Migration 033 leaves existing messages at revision zero.
+   Migration 034 adds a paused-by-default Owner setting and its change history.
 2. Release server/client and verify `/privacy` and `/admin/lounge-review`.
 3. On the existing Render Express service set `OPENAI_API_KEY` to the secret and
    `LOUNGE_MODERATION_MODE=testing`. Never add the key to Vercel or a VITE variable.
-4. The queue's processing banner confirms mode/key presence, not API validity.
+4. An Owner checks **Enable AI checks** on `/admin/lounge-review` and confirms.
+   The setting is shared by all server instances and takes effect on the next
+   cycle (normally within 15 seconds). Pausing does not cancel an in-flight request.
+   Every real change records the Owner, old/new value, revision and timestamp.
+   Stale forms return 409 rather than overwriting another Owner's change.
+5. The queue's processing banner confirms mode/key presence, not API validity.
    Verify one authorized test message completes, then inspect the saved result.
    HTTP 401/429 and network failures appear as failed jobs after five attempts.
 
-The default is `off`. New messages still enqueue while paused; enabling processes
+Render `off` is an unconditional override. `testing` allows the database Owner
+setting to control processing; neither is sufficient without a key and valid
+threshold configuration. If settings cannot be read, no new checks start.
+The database preference defaults to paused; deployment does not activate AI.
+New messages still enqueue while paused; enabling processes
 that post-deployment backlog (up to 90 days). It never scans pre-migration history.
 Each Express instance runs a single in-process asynchronous loop, no extra service.
 Claims use SKIP LOCKED, unique tokens, two-minute leases and conditional completion.
@@ -56,10 +66,13 @@ Verified documentation October 30, 2026:
 ## Disable or roll back
 
 Set `LOUNGE_MODERATION_MODE=off` on Render and redeploy/restart to stop new API
-requests. Existing queued jobs remain. If removing the feature entirely, revert
+requests, or pause through the Owner checkbox without a restart. Existing queued
+jobs remain. Reverting just migration 034's code can remove the Owner pause gate,
+so set Render to `off` before rolling back that code. If removing the feature entirely, revert
 the client/server feature commits, then (after backing up any review history)
 remove the two Lounge triggers/functions, three moderation tables and the two new
-Lounge columns. Leave forum reports alone. Additive database objects may also be
+Lounge columns, plus `moderation_settings` and `moderation_setting_changes`.
+Leave forum reports alone. Additive database objects may also be
 left in place safely. A code rollback stops scheduled cleanup too, so explicitly
 purge moderation snapshots/responses if permanently retiring the feature.
 Text already sent to the provider cannot be unsent. Soft-deleted messages are not
