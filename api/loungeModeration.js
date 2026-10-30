@@ -1,12 +1,14 @@
 import express from 'express';
 import requireUser from '#middleware/requireUser';
 import { failedJobs, getReviewQueue, messageContext, retryFailedJob, reviewResult } from '#db/queries/loungeModeration';
-import { effectiveModerationConfig, publicModerationState } from '#utils/loungeModerationState';
+import { effectiveModerationConfig, publicModerationState, thresholdConfiguration } from '#utils/loungeModerationState';
 import { changeModerationSettings, moderationSettingHistory } from '#db/queries/loungeModerationSettings';
+import { changeModerationThreshold, thresholdHistory } from '#db/queries/loungeModerationThresholds';
+import { validateThresholds } from '#utils/loungeModerationConfig';
 import { notifyLounge } from '#utils/socket';
 
 const router=express.Router();
-router.use((req,res,next)=> { res.set('X-Lounge-Moderation','2'); res.set('Cache-Control','no-store'); next(); });
+router.use((req,res,next)=> { res.set('X-Lounge-Moderation','3'); res.set('Cache-Control','no-store'); next(); });
 router.use(requireUser);
 router.use((req,res,next)=>[1,10,50].includes(req.user.role_id)?next():res.status(403).send({message:'Staff access required.'}));
 router.get('/',async(req,res)=>{
@@ -17,6 +19,19 @@ router.get('/',async(req,res)=>{
   res.send({ ...await getReviewQueue({status,page,search}),processing:publicModerationState(config) });
 });
 router.get('/settings',ownerOnly,async(req,res)=>res.send({processing:publicModerationState(await effectiveModerationConfig()),history:await moderationSettingHistory()}));
+router.get('/thresholds',async(req,res)=>res.send(thresholdConfiguration(await effectiveModerationConfig())));
+router.get('/thresholds/history',ownerOnly,async(req,res)=>res.send({history:await thresholdHistory()}));
+router.patch('/thresholds',ownerOnly,async(req,res)=>{
+  const {category,value,revision}=req.body||{};
+  if(typeof category!=='string'||!Number.isSafeInteger(revision)||revision<1)return res.status(400).send({message:'A category and current threshold revision are required.'});
+  try{validateThresholds({[category]:value});}catch{return res.status(400).send({message:'Choose a known category and a number from 0 to 1.'});}
+  const config=await effectiveModerationConfig();
+  if(config.error)return res.status(503).send({message:'Fix the moderation configuration error before changing thresholds.'});
+  if(Object.hasOwn(config.thresholdOverrides,category))return res.status(409).send({message:'This category is controlled by a Render override. Remove that override before editing it here.'});
+  const result=await changeModerationThreshold({category,value,revision,userId:req.user.user_id});
+  if(!result)return res.status(409).send({message:'Another Owner changed the thresholds. Refresh thresholds, check your draft, then save again.'});
+  res.send({...thresholdConfiguration(await effectiveModerationConfig()),changed:result.changed});
+});
 router.patch('/settings',ownerOnly,async(req,res)=>{
   const {enabled,revision}=req.body||{};
   if(typeof enabled!=='boolean'||!Number.isSafeInteger(revision)||revision<1)return res.status(400).send({message:'An enabled checkbox value and current settings revision are required.'});

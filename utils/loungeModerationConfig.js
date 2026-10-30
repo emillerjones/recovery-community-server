@@ -6,20 +6,25 @@ export const DEFAULT_THRESHOLDS = Object.freeze({
   violence: 0.98, 'violence/graphic': 0.95,
 });
 
+export function validateThresholds(overrides) {
+  if (!overrides || Array.isArray(overrides) || typeof overrides !== 'object') throw new Error('Invalid thresholds');
+  for (const [key,value] of Object.entries(overrides)) {
+    if (!Object.hasOwn(DEFAULT_THRESHOLDS,key)||typeof value!=='number'||!Number.isFinite(value)||value<0||value>1) throw new Error('Invalid threshold');
+  }
+  return overrides;
+}
+
 export function moderationConfig(env = process.env) {
   const mode = env.LOUNGE_MODERATION_MODE || 'off';
   let thresholds = { ...DEFAULT_THRESHOLDS };
+  let thresholdOverrides = {};
   let error = null;
   try {
     if (!['off', 'testing'].includes(mode)) throw new Error('Invalid mode');
-    const overrides = JSON.parse(env.LOUNGE_MODERATION_THRESHOLDS || '{}');
-    if (!overrides || Array.isArray(overrides) || typeof overrides !== 'object') throw new Error('Invalid thresholds');
-    for (const [key, value] of Object.entries(overrides)) {
-      if (!Object.hasOwn(thresholds, key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) throw new Error('Invalid threshold');
-      thresholds[key] = value;
-    }
+    thresholdOverrides = validateThresholds(JSON.parse(env.LOUNGE_MODERATION_THRESHOLDS || '{}'));
+    thresholds = {...thresholds,...thresholdOverrides};
   } catch { error = 'Invalid Lounge moderation configuration. Processing is disabled.'; }
-  return { mode, thresholds, error, enabled: !error && mode === 'testing' && Boolean(env.OPENAI_API_KEY), keyConfigured: Boolean(env.OPENAI_API_KEY) };
+  return { mode, thresholds, thresholdOverrides, error, enabled: !error && mode === 'testing' && Boolean(env.OPENAI_API_KEY), keyConfigured: Boolean(env.OPENAI_API_KEY) };
 }
 
 export function evaluateResponse(response, thresholds) {

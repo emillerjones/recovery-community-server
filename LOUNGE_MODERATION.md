@@ -6,9 +6,11 @@ There is currently no Lounge editing UI; the database hooks cover future body ed
 
 ## Deploy and enable
 
-1. Verify a custom-format database backup and apply migrations 033 and 034 before
+1. Verify a custom-format database backup and apply migrations 033, 034 and 035 before
    releasing the server. Migration 033 leaves existing messages at revision zero.
    Migration 034 adds a paused-by-default Owner setting and its change history.
+   Migration 035 adds saved category cutoffs and a separate cutoff change history;
+   it preserves the existing processing toggle and effective default cutoffs.
 2. Release server/client and verify `/privacy` and `/admin/lounge-review`.
 3. On the existing Render Express service set `OPENAI_API_KEY` to the secret and
    `LOUNGE_MODERATION_MODE=testing`. Never add the key to Vercel or a VITE variable.
@@ -34,9 +36,19 @@ Polling backs off to 15 seconds idle, and retries use exponential delays.
 
 ## Decisions and tuning
 
-`utils/loungeModerationConfig.js` contains provisional conservative thresholds.
-Override individual categories with `LOUNGE_MODERATION_THRESHOLDS` JSON, e.g.
-`{"harassment":0.97}`. Invalid configuration disables processing, not posting.
+Staff can open **AI review thresholds** on the review page to see all 13 categories,
+plain-language explanations, examples and effective cutoffs. Only Owners can edit
+and save a category, with independent Save/Cancel behavior and visible confirmation.
+Database `moderation_settings.thresholds` stores overrides of the provisional
+defaults in `utils/loungeModerationConfig.js`. Cutoff revisions and changes are
+separate from the processing-toggle revision/history. Stale edits return 409.
+
+Precedence: Render `LOUNGE_MODERATION_THRESHOLDS` overrides saved Owner cutoffs,
+which override code defaults. A Render-controlled category is explicitly labeled
+and cannot be edited through the app/API until its Render override is removed.
+Invalid configuration disables processing, not posting.
+Changes apply to checks starting afterward (including queued messages), not
+in-flight checks or old results. Nothing automatically reprocesses historical text.
 The overall API `flagged` boolean is retained but does not determine our queue.
 Scores are not calibrated probabilities of violating community rules. Evaluate
 false positives/negatives on recovery conversations before relying on thresholds.
@@ -72,6 +84,7 @@ so set Render to `off` before rolling back that code. If removing the feature en
 the client/server feature commits, then (after backing up any review history)
 remove the two Lounge triggers/functions, three moderation tables and the two new
 Lounge columns, plus `moderation_settings` and `moderation_setting_changes`.
+Also remove `moderation_threshold_changes` if retiring the threshold editor.
 Leave forum reports alone. Additive database objects may also be
 left in place safely. A code rollback stops scheduled cleanup too, so explicitly
 purge moderation snapshots/responses if permanently retiring the feature.

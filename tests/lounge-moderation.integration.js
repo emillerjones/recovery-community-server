@@ -26,6 +26,7 @@ try {
   await db.query((await fs.readFile(new URL('../db/migrations/033_add_lounge_moderation.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   await db.query((await fs.readFile(new URL('../db/migrations/033_add_lounge_moderation.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   for(let i=0;i<2;i++)await db.query((await fs.readFile(new URL('../db/migrations/034_add_lounge_moderation_settings.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
+  for(let i=0;i<2;i++)await db.query((await fs.readFile(new URL('../db/migrations/035_add_moderation_thresholds.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   assert.equal((await db.query('SELECT COUNT(*)::INT n FROM moderation_jobs')).rows[0].n,0);
   assert.equal(moderationConfig({}).enabled,false);
   assert.equal(moderationConfig({LOUNGE_MODERATION_MODE:'testing',OPENAI_API_KEY:'test'}).enabled,true);
@@ -100,6 +101,56 @@ try {
     if(priorMode===undefined)delete process.env.LOUNGE_MODERATION_MODE;else process.env.LOUNGE_MODERATION_MODE=priorMode;
     if(priorKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=priorKey;
   }
+  // Editable thresholds: definitions for all categories, current sources, Owner-only writes,
+  // separate revision/audit trail, immutable historical report cards, next-check behavior.
+  const previousOverrides=process.env.LOUNGE_MODERATION_THRESHOLDS;
+  try{
+    delete process.env.LOUNGE_MODERATION_THRESHOLDS;
+    for(const staff of [mod,admin,owner]){
+      const config=await request(staff,'/thresholds');assert.equal(config.status,200);
+      assert.equal(config.data.categories.length,Object.keys(DEFAULT_THRESHOLDS).length);
+      assert.deepEqual(new Set(config.data.categories.map(category=>category.key)),new Set(Object.keys(DEFAULT_THRESHOLDS)));
+      assert.ok(config.data.categories.every(category=>category.label&&category.description&&category.source==='default'));
+    }
+    assert.equal((await request(null,'/thresholds')).status,401);
+    assert.equal((await request(member,'/thresholds')).status,403);
+    for(const denied of [member,mod,admin]){
+      assert.equal((await request(denied,'/thresholds','PATCH',{category:'harassment',value:.8,revision:1})).status,403);
+      assert.equal((await request(denied,'/thresholds/history')).status,403);
+    }
+    for(const value of [-.01,1.01,null,'0.8',{},[]])assert.equal((await request(owner,'/thresholds','PATCH',{category:'harassment',value,revision:1})).status,400);
+    assert.equal((await request(owner,'/thresholds','PATCH',{category:'unknown',value:.8,revision:1})).status,400);
+    const toggleState=(await request(owner,'/settings')).data.processing;
+    const originalResult=(await db.query('SELECT thresholds_used,response FROM moderation_results WHERE result_id=$1',[result.result_id])).rows[0];
+    let changed=await request(owner,'/thresholds','PATCH',{category:'harassment',value:.8,revision:1});
+    assert.equal(changed.status,200);assert.equal(changed.data.revision,2);
+    assert.equal(changed.data.categories.find(category=>category.key==='harassment').source,'owner');
+    assert.equal((await effectiveModerationConfig()).thresholds.harassment,.8);
+    assert.equal((await request(owner,'/settings')).data.processing.settingsRevision,toggleState.settingsRevision,'Cutoff changes do not change toggle revision');
+    assert.equal((await request(owner,'/settings')).data.processing.ownerEnabled,toggleState.ownerEnabled,'Cutoff changes never enable processing');
+    assert.equal((await request(owner,'/thresholds','PATCH',{category:'harassment',value:.7,revision:1})).status,409);
+    assert.equal((await request(owner,'/thresholds','PATCH',{category:'harassment',value:.8,revision:2})).data.changed,false);
+    assert.equal((await request(owner,'/thresholds/history')).data.history.length,1);
+    assert.deepEqual((await db.query('SELECT thresholds_used,response FROM moderation_results WHERE result_id=$1',[result.result_id])).rows[0],originalResult,'Existing report cards remain unchanged');
+    const thresholdMessage=await message('Threshold behavior check');
+    await processModerationJob({config:{...config,thresholds:(await effectiveModerationConfig()).thresholds},fetchImpl:async()=>({ok:true,json:async()=>response(false,.85)})});
+    const card=(await db.query('SELECT * FROM moderation_results WHERE message_id=$1',[thresholdMessage.message_id])).rows[0];
+    assert.equal(card.needs_review,true);assert.equal(card.thresholds_used.harassment,.8);
+    process.env.LOUNGE_MODERATION_THRESHOLDS='{"harassment":0.99}';
+    let override=(await request(owner,'/thresholds')).data.categories.find(category=>category.key==='harassment');
+    assert.equal(override.value,.99);assert.equal(override.source,'render');
+    assert.equal((await request(owner,'/thresholds','PATCH',{category:'harassment',value:.7,revision:2})).status,409);
+    assert.equal((await effectiveModerationConfig()).thresholds.harassment,.99);
+    delete process.env.LOUNGE_MODERATION_THRESHOLDS;
+    for(const value of [0,1,.95]){
+      const revision=(await request(owner,'/thresholds')).data.revision;
+      assert.equal((await request(owner,'/thresholds','PATCH',{category:'harassment',value,revision})).status,200);
+    }
+    const audit=(await request(owner,'/thresholds/history')).data.history;
+    assert.equal(audit.length,4);assert.equal(audit[0].previous_threshold,1);assert.equal(audit[0].threshold,.95);assert.equal(audit[0].changed_by_username,'owner');
+    // Retire this isolated fixture so subsequent queue assertions concern the original message.
+    await db.query("UPDATE moderation_results SET review_status='superseded' WHERE result_id=$1",[card.result_id]);
+  }finally{if(previousOverrides===undefined)delete process.env.LOUNGE_MODERATION_THRESHOLDS;else process.env.LOUNGE_MODERATION_THRESHOLDS=previousOverrides;}
   assert.equal((await request(mod,'?page=-1')).status,400);
   assert.equal((await request(mod,`/results/${result.result_id}/review`,'POST',{action:'delete'})).status,403);
   assert.equal((await request(mod,`/results/${result.result_id}/review`,'POST',{action:'clear'})).status,200);
