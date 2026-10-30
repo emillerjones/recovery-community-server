@@ -5,6 +5,7 @@
     "#*": "./*.js"
   },
   "scripts": {
+    "test:lounge-moderation": "node --env-file=.env tests/lounge-moderation.integration.js",
     "test:discount-logos": "node --env-file=.env tests/discount-logo.integration.js",
     "test:imported-posts": "node --env-file=.env tests/imported-posts.integration.js",
     "test:like-migration": "node --env-file=.env tests/like-migration.integration.js",

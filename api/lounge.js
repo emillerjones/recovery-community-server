@@ -71,7 +71,7 @@ router.delete("/messages/:id", async (req, res) => {
   const deleted = await softDeleteLoungeMessage({
     messageId,
     actingUserId: req.user.user_id,
-    canModerate: req.user.role_id <= 50,
+    canModerate: [1, 10].includes(req.user.role_id),
   });
   if (!deleted) return res.status(403).send({ message: "You cannot delete that message." });
   notifyLounge("lounge_message_deleted", deleted);
