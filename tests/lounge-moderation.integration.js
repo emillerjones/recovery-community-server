@@ -5,7 +5,7 @@ import express from 'express';
 process.env.DB_CLIENT_MODE='single';
 const {default:db}=await import('../db/client.js');
 const queries=await import('../db/queries/loungeModeration.js');
-const {moderationConfig,DEFAULT_THRESHOLDS,evaluateResponse}=await import('../utils/loungeModerationConfig.js');
+const {moderationConfig,DEFAULT_THRESHOLDS,evaluateResponse,evaluateDecision}=await import('../utils/loungeModerationConfig.js');
 const {processModerationJob}=await import('../utils/loungeModerationProcessor.js');
 const {default:router}=await import('../api/loungeModeration.js');
 const {default:lounge}=await import('../api/lounge.js');
@@ -27,6 +27,7 @@ try {
   await db.query((await fs.readFile(new URL('../db/migrations/033_add_lounge_moderation.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   for(let i=0;i<2;i++)await db.query((await fs.readFile(new URL('../db/migrations/034_add_lounge_moderation_settings.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   for(let i=0;i<2;i++)await db.query((await fs.readFile(new URL('../db/migrations/035_add_moderation_thresholds.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
+  for(let i=0;i<2;i++)await db.query((await fs.readFile(new URL('../db/migrations/037_add_moderation_review_modes.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   assert.equal((await db.query('SELECT COUNT(*)::INT n FROM moderation_jobs')).rows[0].n,0);
   assert.equal(moderationConfig({}).enabled,false);
   assert.equal(moderationConfig({LOUNGE_MODERATION_MODE:'testing',OPENAI_API_KEY:'test'}).enabled,true);
@@ -151,6 +152,51 @@ try {
     // Retire this isolated fixture so subsequent queue assertions concern the original message.
     await db.query("UPDATE moderation_results SET review_status='superseded' WHERE result_id=$1",[card.result_id]);
   }finally{if(previousOverrides===undefined)delete process.env.LOUNGE_MODERATION_THRESHOLDS;else process.env.LOUNGE_MODERATION_THRESHOLDS=previousOverrides;}
+  // All 12 combinations of score and overall flag; the OpenAI option uses the
+  // overall boolean, even when no individual category boolean is present.
+  const originalCard=(await db.query('SELECT * FROM moderation_results WHERE result_id=$1',[result.result_id])).rows[0];
+  const priorSettings=(await request(owner,'/settings')).data.processing;
+  for(const denied of [member,mod,admin]){
+    assert.equal((await request(denied,'/review-mode','PATCH',{reviewMode:'either',revision:1})).status,403);
+    assert.equal((await request(denied,'/review-mode/history')).status,403);
+  }
+  assert.equal((await request(null,'/review-mode/history')).status,401);
+  for(const body of [{},{reviewMode:'bad',revision:1},{reviewMode:'either',revision:0},{reviewMode:'either',revision:'1'}])assert.equal((await request(owner,'/review-mode','PATCH',body)).status,400);
+  let modeRevision=1;
+  for(const reviewMode of ['cutoffs','openai','either']){
+    const changed=await request(owner,'/review-mode','PATCH',{reviewMode,revision:modeRevision});assert.equal(changed.status,200);
+    modeRevision=changed.data.processing.reviewModeRevision;
+    for(const flagged of [false,true])for(const crossed of [false,true]){
+      const data=response(flagged,crossed?.99:.01),decision=evaluateDecision(data,DEFAULT_THRESHOLDS,reviewMode);
+      const expected=reviewMode==='cutoffs'?crossed:reviewMode==='openai'?flagged:crossed||flagged;
+      assert.equal(decision.needsReview,expected);
+      assert.deepEqual(decision.reasons,[...(reviewMode!=='openai'&&crossed?['cutoffs']:[]),...(reviewMode!=='cutoffs'&&flagged?['openai']:[])]);
+      const fixture=await message(`Mode ${reviewMode}, flagged ${flagged}, crossed ${crossed}`);
+      await processModerationJob({config:{...config,reviewMode},fetchImpl:async()=>({ok:true,json:async()=>data})});
+      const saved=(await db.query('SELECT * FROM moderation_results WHERE message_id=$1',[fixture.message_id])).rows[0];
+      assert.equal(saved.needs_review,expected);assert.equal(saved.review_mode,reviewMode);assert.deepEqual(saved.review_reasons,decision.reasons);
+      assert.deepEqual(saved.response,data);assert.deepEqual(saved.thresholds_used,DEFAULT_THRESHOLDS);
+      await db.query("UPDATE moderation_results SET review_status='superseded' WHERE result_id=$1",[saved.result_id]);
+    }
+  }
+  assert.equal((await request(owner,'/review-mode','PATCH',{reviewMode:'openai',revision:1})).status,409);
+  assert.equal((await request(owner,'/review-mode/history')).data.history.length,2);
+  assert.equal((await request(owner,'/review-mode','PATCH',{reviewMode:'either',revision:modeRevision})).data.changed,false);
+  assert.equal((await request(owner,'/review-mode/history')).data.history.length,2,'No-op does not create history');
+  const modeSettings=(await request(owner,'/settings')).data.processing;
+  assert.equal(modeSettings.ownerEnabled,priorSettings.ownerEnabled);assert.equal(modeSettings.settingsRevision,priorSettings.settingsRevision);
+  assert.deepEqual((await db.query('SELECT * FROM moderation_results WHERE result_id=$1',[result.result_id])).rows[0],originalCard,'Changing modes leaves historical cards untouched');
+  const inflight=await message('Snapshot captured before mode changes');
+  await processModerationJob({config:{...config,reviewMode:'openai'},fetchImpl:async()=>{
+    await request(owner,'/review-mode','PATCH',{reviewMode:'cutoffs',revision:modeRevision});
+    return {ok:true,json:async()=>response(true,.01)};
+  }});
+  const snapshot=(await db.query('SELECT * FROM moderation_results WHERE message_id=$1',[inflight.message_id])).rows[0];
+  assert.equal(snapshot.review_mode,'openai');assert.equal(snapshot.needs_review,true);
+  await db.query("UPDATE moderation_results SET review_status='superseded' WHERE result_id=$1",[snapshot.result_id]);
+  const invalid=response();delete invalid.results[0].flagged;
+  assert.throws(()=>evaluateDecision(invalid,DEFAULT_THRESHOLDS,'openai'),/Invalid moderation response/);
+  assert.equal((await effectiveModerationConfig()).reviewMode,'cutoffs');
   assert.equal((await request(mod,'?page=-1')).status,400);
   assert.equal((await request(mod,`/results/${result.result_id}/review`,'POST',{action:'delete'})).status,403);
   assert.equal((await request(mod,`/results/${result.result_id}/review`,'POST',{action:'clear'})).status,200);

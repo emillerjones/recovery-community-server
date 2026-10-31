@@ -33,7 +33,7 @@ export async function getJobMessage(job) {
   return rows[0];
 }
 
-export async function completeJob(job, response, thresholds, triggered) {
+export async function completeJob(job, response, thresholds, triggered, decision={reviewMode:'cutoffs',reasons:triggered.length?['cutoffs']:[],needsReview:triggered.length>0}) {
   return withTransaction(async client => {
     // Hold the content lock through final version validation and result insertion.
     const { rows: [message] } = await client.query(`SELECT lm.* FROM lounge_messages lm JOIN lounge_rooms lr ON lr.room_id=lm.room_id
@@ -43,9 +43,9 @@ export async function completeJob(job, response, thresholds, triggered) {
       WHERE job_id=$1 AND claim_token=$2 AND status='processing' AND claimed_until>NOW()`, [job.job_id,job.claim_token,current?'completed':'superseded']);
     if (!rowCount || !current) return false;
     await client.query(`UPDATE moderation_results SET review_status='superseded' WHERE message_id=$1 AND review_status='pending' AND content_version<>$2`, [job.message_id,job.content_version]);
-    await client.query(`INSERT INTO moderation_results(job_id,message_id,content_version,content_snapshot,model,response,thresholds_used,triggered_categories,needs_review,review_status)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(job_id) DO NOTHING`,
-    [job.job_id,job.message_id,job.content_version,message.body,response.model,JSON.stringify(response),JSON.stringify(thresholds),JSON.stringify(triggered),triggered.length>0,triggered.length?'pending':'not_needed']);
+    await client.query(`INSERT INTO moderation_results(job_id,message_id,content_version,content_snapshot,model,response,thresholds_used,triggered_categories,needs_review,review_status,review_mode,review_reasons)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(job_id) DO NOTHING`,
+    [job.job_id,job.message_id,job.content_version,message.body,response.model,JSON.stringify(response),JSON.stringify(thresholds),JSON.stringify(triggered),decision.needsReview,decision.needsReview?'pending':'not_needed',decision.reviewMode,JSON.stringify(decision.reasons)]);
     return true;
   });
 }

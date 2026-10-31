@@ -1,5 +1,5 @@
 import { getModerationSettings } from '#db/queries/loungeModerationSettings';
-import { moderationConfig, validateThresholds, DEFAULT_THRESHOLDS } from '#utils/loungeModerationConfig';
+import { moderationConfig, validateThresholds, DEFAULT_THRESHOLDS, REVIEW_MODES } from '#utils/loungeModerationConfig';
 import { MODERATION_CATEGORIES } from '#utils/loungeModerationCategories';
 
 export async function effectiveModerationConfig() {
@@ -8,11 +8,14 @@ export async function effectiveModerationConfig() {
   let error=config.error;
   let savedThresholds={};
   try{savedThresholds=validateThresholds(settings.thresholds);}catch{error='Saved moderation thresholds are invalid. Processing is disabled.';}
+  if(!REVIEW_MODES.includes(settings.review_mode))error='Saved review mode is invalid. Processing is disabled.';
   return {...config,error,thresholds:{...DEFAULT_THRESHOLDS,...savedThresholds,...config.thresholdOverrides},
     savedThresholds,thresholdRevision:settings.threshold_revision,
     thresholdsUpdatedAt:settings.thresholds_updated_at,thresholdsUpdatedByUsername:settings.thresholds_updated_by_username,
     enabled:!error&&config.enabled&&settings.enabled,ownerEnabled:settings.enabled,
-    settingsRevision:settings.revision,updatedAt:settings.updated_at,updatedByUsername:settings.updated_by_username};
+    settingsRevision:settings.revision,updatedAt:settings.updated_at,updatedByUsername:settings.updated_by_username,
+    reviewMode:settings.review_mode,reviewModeRevision:settings.review_mode_revision,
+    reviewModeUpdatedAt:settings.review_mode_updated_at,reviewModeUpdatedByUsername:settings.review_mode_updated_by_username};
 }
 
 export function thresholdConfiguration(config) {
@@ -24,6 +27,8 @@ export function thresholdConfiguration(config) {
 }
 
 export function publicModerationState(config) {
-  const {mode,enabled,keyConfigured,error,ownerEnabled,settingsRevision,updatedAt,updatedByUsername}=config;
-  return {mode,enabled,keyConfigured,error,ownerEnabled,settingsRevision,updatedAt,updatedByUsername};
+  const {mode,enabled,keyConfigured,error,ownerEnabled,settingsRevision,updatedAt,updatedByUsername,
+    reviewMode,reviewModeRevision,reviewModeUpdatedAt,reviewModeUpdatedByUsername}=config;
+  return {mode,enabled,keyConfigured,error,ownerEnabled,settingsRevision,updatedAt,updatedByUsername,
+    reviewMode,reviewModeRevision,reviewModeUpdatedAt,reviewModeUpdatedByUsername};
 }

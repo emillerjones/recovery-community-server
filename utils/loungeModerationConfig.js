@@ -36,3 +36,15 @@ export function evaluateResponse(response, thresholds) {
   }
   return Object.entries(thresholds).filter(([category, threshold]) => result.category_scores[category] >= threshold).map(([category]) => category);
 }
+
+export const REVIEW_MODES = Object.freeze(['cutoffs','openai','either']);
+
+export function evaluateDecision(response, thresholds, reviewMode='cutoffs') {
+  if (!REVIEW_MODES.includes(reviewMode)) throw new Error('Invalid moderation response');
+  const triggered = evaluateResponse(response, thresholds);
+  if (typeof response.results[0].flagged !== 'boolean') throw new Error('Invalid moderation response');
+  const reasons = [];
+  if (reviewMode !== 'openai' && triggered.length) reasons.push('cutoffs');
+  if (reviewMode !== 'cutoffs' && response.results[0].flagged) reasons.push('openai');
+  return { reviewMode, triggered, reasons, needsReview: reasons.length > 0 };
+}

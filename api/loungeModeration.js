@@ -2,13 +2,13 @@ import express from 'express';
 import requireUser from '#middleware/requireUser';
 import { failedJobs, getReviewQueue, messageContext, retryFailedJob, reviewResult } from '#db/queries/loungeModeration';
 import { effectiveModerationConfig, publicModerationState, thresholdConfiguration } from '#utils/loungeModerationState';
-import { changeModerationSettings, moderationSettingHistory } from '#db/queries/loungeModerationSettings';
+import { changeModerationSettings, moderationSettingHistory, changeReviewMode, reviewModeHistory } from '#db/queries/loungeModerationSettings';
 import { changeModerationThreshold, thresholdHistory } from '#db/queries/loungeModerationThresholds';
-import { validateThresholds } from '#utils/loungeModerationConfig';
+import { validateThresholds, REVIEW_MODES } from '#utils/loungeModerationConfig';
 import { notifyLounge } from '#utils/socket';
 
 const router=express.Router();
-router.use((req,res,next)=> { res.set('X-Lounge-Moderation','3'); res.set('Cache-Control','no-store'); next(); });
+router.use((req,res,next)=> { res.set('X-Lounge-Moderation','4'); res.set('Cache-Control','no-store'); next(); });
 router.use(requireUser);
 router.use((req,res,next)=>[1,10,50].includes(req.user.role_id)?next():res.status(403).send({message:'Staff access required.'}));
 router.get('/',async(req,res)=>{
@@ -19,6 +19,14 @@ router.get('/',async(req,res)=>{
   res.send({ ...await getReviewQueue({status,page,search}),processing:publicModerationState(config) });
 });
 router.get('/settings',ownerOnly,async(req,res)=>res.send({processing:publicModerationState(await effectiveModerationConfig()),history:await moderationSettingHistory()}));
+router.get('/review-mode/history',ownerOnly,async(req,res)=>res.send({history:await reviewModeHistory()}));
+router.patch('/review-mode',ownerOnly,async(req,res)=>{
+  const {reviewMode,revision}=req.body||{};
+  if(!REVIEW_MODES.includes(reviewMode)||!Number.isSafeInteger(revision)||revision<1)return res.status(400).send({message:'Choose a review mode and provide its current revision.'});
+  const result=await changeReviewMode({reviewMode,revision,userId:req.user.user_id});
+  if(!result)return res.status(409).send({message:'Another Owner changed the review mode. Refresh the page, check your choice, then save again.'});
+  res.send({...result,processing:publicModerationState(await effectiveModerationConfig())});
+});
 router.get('/thresholds',async(req,res)=>res.send(thresholdConfiguration(await effectiveModerationConfig())));
 router.get('/thresholds/history',ownerOnly,async(req,res)=>res.send({history:await thresholdHistory()}));
 router.patch('/thresholds',ownerOnly,async(req,res)=>{

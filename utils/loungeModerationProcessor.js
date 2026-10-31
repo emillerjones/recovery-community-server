@@ -1,4 +1,4 @@
-import { evaluateResponse } from './loungeModerationConfig.js';
+import { evaluateDecision } from './loungeModerationConfig.js';
 import { effectiveModerationConfig } from './loungeModerationState.js';
 import { claimJob, completeJob, failJob, getJobMessage, purgeModerationData, reconcileJobs, supersedeJob } from '#db/queries/loungeModeration';
 
@@ -20,8 +20,8 @@ export async function processModerationJob({ fetchImpl=fetch, config }={}) {
     if (!response.ok) throw new Error(`API HTTP ${response.status}`);
     let data;
     try { data = await response.json(); } catch { throw new Error('Invalid API JSON'); }
-    const triggered = evaluateResponse(data,config.thresholds);
-    await completeJob(job,data,config.thresholds,triggered);
+    const decision = evaluateDecision(data,config.thresholds,config.reviewMode);
+    await completeJob(job,data,config.thresholds,decision.triggered,decision);
   } catch (error) {
     const safe = /^(API HTTP \d{3}|API network error or timeout|Invalid API JSON|Invalid moderation response|Invalid moderation scores)$/.test(error.message)
       ? error.message : 'Moderation processing failed';
