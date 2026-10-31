@@ -1,5 +1,6 @@
 import { evaluateDecision } from './loungeModerationConfig.js';
 import { effectiveModerationConfig } from './loungeModerationState.js';
+import { requestModeration } from './loungeModerationRequest.js';
 import { claimJob, completeJob, failJob, getJobMessage, purgeModerationData, reconcileJobs, supersedeJob } from '#db/queries/loungeModeration';
 
 export async function processModerationJob({ fetchImpl=fetch, config }={}) {
@@ -10,16 +11,7 @@ export async function processModerationJob({ fetchImpl=fetch, config }={}) {
   try {
     const message = await getJobMessage(job);
     if (!message) { await supersedeJob(job); return true; }
-    let response;
-    try {
-      response = await fetchImpl('https://api.openai.com/v1/moderations', {
-        method:'POST', headers:{ Authorization:`Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type':'application/json' },
-        body:JSON.stringify({ model:'omni-moderation-latest', input:message.body }), signal:AbortSignal.timeout(20_000),
-      });
-    } catch { throw new Error('API network error or timeout'); }
-    if (!response.ok) throw new Error(`API HTTP ${response.status}`);
-    let data;
-    try { data = await response.json(); } catch { throw new Error('Invalid API JSON'); }
+    const data = await requestModeration(message.body,{fetchImpl});
     const decision = evaluateDecision(data,config.thresholds,config.reviewMode);
     await completeJob(job,data,config.thresholds,decision.triggered,decision);
   } catch (error) {

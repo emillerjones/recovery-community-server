@@ -257,6 +257,51 @@ try {
   assert.equal((await db.query('SELECT COUNT(*)::INT n FROM moderation_jobs WHERE message_id=$1',[missed.message_id])).rows[0].n,1);
   assert.equal((await db.query('SELECT COUNT(*)::INT n FROM moderation_jobs WHERE message_id=$1',[historical.message_id])).rows[0].n,0);
   assert.equal((await request(member,`/lounge/messages/${missed.message_id}`,'DELETE')).status,200,'Members can still delete their own messages');
+  // Owner sandbox uses the same request/evaluation path but never creates rows.
+  const nativeFetch=globalThis.fetch,oldMode=process.env.LOUNGE_MODERATION_MODE,oldKey=process.env.OPENAI_API_KEY;
+  let sandboxCalls=0,upstreamFails=false;
+  const snapshotTables=async()=>{
+    const snapshot={};
+    for(const table of ['lounge_messages','moderation_jobs','moderation_results','moderation_review_actions','moderation_setting_changes','moderation_threshold_changes','moderation_mode_changes'])
+      snapshot[table]=(await db.query(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb) data FROM ${table} t`)).rows[0].data;
+    return snapshot;
+  };
+  try{
+    process.env.LOUNGE_MODERATION_MODE='testing';process.env.OPENAI_API_KEY='sandbox-mock-key';
+    globalThis.fetch=async(url,options)=>{
+      if(url!=='https://api.openai.com/v1/moderations')return nativeFetch(url,options);
+      sandboxCalls++;assert.equal(options.headers.Authorization,'Bearer sandbox-mock-key');
+      assert.deepEqual(JSON.parse(options.body),{model:'omni-moderation-latest',input:'Synthetic recovery example'});
+      assert.ok(options.signal);
+      return upstreamFails?{ok:false,status:429}:{ok:true,json:async()=>response(true,.01)};
+    };
+    assert.equal((await request(null,'/test','POST',{text:'Synthetic recovery example'})).status,401);
+    for(const denied of [member,mod,admin])assert.equal((await request(denied,'/test','POST',{text:'Synthetic recovery example'})).status,403);
+    assert.equal(sandboxCalls,0);
+    assert.equal((await request(owner,'/test','POST',{text:'   '})).status,400);
+    assert.equal((await request(owner,'/test','POST',{text:'x'.repeat(4001)})).status,400);
+    await db.query("UPDATE moderation_settings SET enabled=TRUE,review_mode='cutoffs' WHERE settings_id=1");
+    const before=await snapshotTables();
+    const cutoffTest=await request(owner,'/test','POST',{text:'Synthetic recovery example'});
+    assert.equal(cutoffTest.status,200);assert.equal(cutoffTest.data.needs_review,false);assert.equal(cutoffTest.data.review_mode,'cutoffs');
+    assert.deepEqual(cutoffTest.data.response,response(true,.01));
+    await db.query("UPDATE moderation_settings SET review_mode='openai' WHERE settings_id=1");
+    const openaiTest=await request(owner,'/test','POST',{text:'Synthetic recovery example'});
+    assert.equal(openaiTest.status,200);assert.equal(openaiTest.data.needs_review,true);assert.deepEqual(openaiTest.data.review_reasons,['openai']);
+    assert.equal(Object.keys(openaiTest.data.thresholds_used).length,13);
+    upstreamFails=true;
+    const failedTest=await request(owner,'/test','POST',{text:'Synthetic recovery example'});assert.equal(failedTest.status,502);
+    assert.ok(!JSON.stringify(failedTest.data).includes('sandbox-mock-key'));
+    await db.query('UPDATE moderation_settings SET enabled=FALSE WHERE settings_id=1');
+    assert.equal((await request(owner,'/test','POST',{text:'Synthetic recovery example'})).status,503);
+    assert.equal(sandboxCalls,3,'Paused tests never contact OpenAI');
+    assert.equal((await request(owner,'/test','POST',{text:'Synthetic recovery example'})).status,429);
+    assert.deepEqual(await snapshotTables(),before,'Sandbox success, failure and pause create no messages, jobs, results or audit rows');
+  }finally{
+    globalThis.fetch=nativeFetch;
+    if(oldMode===undefined)delete process.env.LOUNGE_MODERATION_MODE;else process.env.LOUNGE_MODERATION_MODE=oldMode;
+    if(oldKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=oldKey;
+  }
   const suspended={...mod,active:false};users[1]=suspended;assert.equal((await request(suspended)).status,403);
   console.log('PASS Lounge AI: migration/no backfill, staff exclusion, fail-open enqueue/repair, disabled mode, full result storage, threshold validation, publication, role boundaries, context privacy, clear/delete audit, edits, stale claims, retries, retention.');
 } finally {if(server)await new Promise(resolve=>server.close(resolve));await db.query('ROLLBACK');await db.end();}

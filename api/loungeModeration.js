@@ -6,9 +6,11 @@ import { changeModerationSettings, moderationSettingHistory, changeReviewMode, r
 import { changeModerationThreshold, thresholdHistory } from '#db/queries/loungeModerationThresholds';
 import { validateThresholds, REVIEW_MODES } from '#utils/loungeModerationConfig';
 import { notifyLounge } from '#utils/socket';
+import { rateLimit } from 'express-rate-limit';
+import { testModeration } from '#utils/loungeModerationTest';
 
 const router=express.Router();
-router.use((req,res,next)=> { res.set('X-Lounge-Moderation','4'); res.set('Cache-Control','no-store'); next(); });
+router.use((req,res,next)=> { res.set('X-Lounge-Moderation','5'); res.set('Cache-Control','no-store'); next(); });
 router.use(requireUser);
 router.use((req,res,next)=>[1,10,50].includes(req.user.role_id)?next():res.status(403).send({message:'Staff access required.'}));
 router.get('/',async(req,res)=>{
@@ -19,6 +21,20 @@ router.get('/',async(req,res)=>{
   res.send({ ...await getReviewQueue({status,page,search}),processing:publicModerationState(config) });
 });
 router.get('/settings',ownerOnly,async(req,res)=>res.send({processing:publicModerationState(await effectiveModerationConfig()),history:await moderationSettingHistory()}));
+const testLimiter=rateLimit({windowMs:60_000,limit:6,standardHeaders:'draft-7',legacyHeaders:false,
+  keyGenerator:req=>String(req.user.user_id),message:{message:'Please wait a minute before running more tests.'}});
+router.post('/test',ownerOnly,testLimiter,async(req,res)=>{
+  const text=req.body?.text;
+  if(typeof text!=='string'||!text.trim()||text.length>4000)return res.status(400).send({message:'Enter between 1 and 4,000 characters.'});
+  try{
+    const result=await testModeration(text);
+    if(result.unavailable)return res.status(503).send({message:'Enable AI checks and resolve any server configuration issues before testing.'});
+    res.send(result);
+  }catch{
+    // Do not forward or log upstream response bodies, input, or credentials.
+    res.status(502).send({message:'The AI check could not finish. Nothing was saved. Please try again.'});
+  }
+});
 router.get('/review-mode/history',ownerOnly,async(req,res)=>res.send({history:await reviewModeHistory()}));
 router.patch('/review-mode',ownerOnly,async(req,res)=>{
   const {reviewMode,revision}=req.body||{};
