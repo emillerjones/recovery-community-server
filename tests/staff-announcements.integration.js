@@ -27,6 +27,7 @@ try {
   const migration = (await fs.readFile(new URL("../db/migrations/024_add_staff_announcements.sql", import.meta.url), "utf8")).replace(/^BEGIN;|^COMMIT;/gm, "");
   await db.query(migration);
   await db.query(migration);
+  await db.query((await fs.readFile(new URL('../db/migrations/036_allow_staff_notification_read_updates.sql',import.meta.url),'utf8')).replace(/^BEGIN;|^COMMIT;/gm,''));
   assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM forum_categories WHERE slug='staff-announcements'")).rows[0].n, 1);
   await db.query("INSERT INTO user_roles(role_id,role_name) VALUES(1,'Owner'),(10,'Admin'),(50,'Moderator'),(100,'Member')");
   await db.query("INSERT INTO users(role_id,email,password,username,is_system) VALUES(50,'system@test.invalid','unused','system',TRUE)");
