@@ -2,7 +2,7 @@
 
 **Prepared for:** Recovery With The Exit Drug ownership and administration
 
-**Review date:** July 28, 2026
+**Review date:** July 28, 2026 · **Updated:** November 4, 2026 (checked against the current code)
 
 ## Executive summary
 
@@ -10,9 +10,25 @@ Recovery Community has a genuine, layered security foundation. Its protections a
 
 Passwords are hashed, membership is controlled, protected requests require a signed login token, current account status is checked on each protected API request, administrative actions require role checks, private conversations verify their participants, and database queries use parameterized values to reduce SQL-injection risk.
 
-The current system is appropriate for controlled testing and a small private beta. It should not yet be described as completely secure or fully production-hardened. Before inviting the entire existing Facebook membership, a focused hardening pass is recommended. The highest priorities are login throttling, secure authentication cookies, restricted CORS, security headers, stronger WebSocket account checks, stricter administration-route guards, and multifactor authentication for staff.
+The current system is appropriate for controlled testing and a small private beta. It should not yet be described as completely secure or fully production-hardened. Before inviting the entire existing Facebook membership, a focused hardening pass is recommended. The highest remaining priorities are login throttling, secure authentication cookies, restricted CORS, security headers, stricter administration-route guards, and multifactor authentication for staff.
 
 No internet application can honestly be guaranteed to be unhackable. The responsible claim is that this application has multiple meaningful security layers, known risks have been identified, and the remaining work is specific and manageable.
+
+### Hardening status (November 4, 2026)
+
+| Priority | Item | Status |
+|---|---|---|
+| 1 | Login throttling | Open. Registration, verification resend and password reset are rate-limited; login is not. |
+| 2 | Secure cookies instead of `localStorage` tokens | Open |
+| 3 | Restrict CORS | Open. The API still allows every origin. |
+| 4 | HTTP security headers | Open |
+| 5 | Recheck account status for WebSockets | **Done.** The Socket.IO handshake reloads the member and checks approval, active and deleted status, and session version. Remaining refinement: deactivation does not yet disconnect sockets that are already open. |
+| 6 | Explicit administration guards | Open. Role and activation changes still rely on role hierarchy rather than an explicit owner/administrator check and an allowlist of assignable roles. |
+| 7 | Staff multifactor authentication | Open |
+| 8 | Bot protection on registration | Open |
+| 9 | Session revocation | Partly done. A per-member session version now lets a password reset invalidate every existing REST and Socket.IO token. Logout still only removes the browser's copy. |
+| 10 | Minimize sensitive information | Partly done. The profile screen no longer shows the personal-details section; the phone and date-of-birth columns still exist in the database. |
+| 11 | Operational security | Ongoing |
 
 ## Security model at a glance
 
@@ -91,14 +107,14 @@ Important forum permissions are enforced by the API and, for sensitive mutations
 
 Current rules include:
 
-- Regular members cannot edit content after publishing it.
-- Moderators and administrators can edit their own content.
+- Members can edit their own posts, and each edit is kept in a visible edit history.
 - Only the owner can edit another person's content.
 - An author can soft-delete their own post or comment.
 - Owners and administrators can delete another person's forum content.
 - Moderator tools require a moderator-or-higher role.
 - Announcement creation requires a moderator-or-higher role.
-- Permanent test-account deletion is owner-only and refuses staff accounts, the current owner's account, system accounts, and accounts with community activity.
+- Accounts are never permanently deleted through the application. Staff can deactivate and reactivate accounts with a lower role than their own, which is reversible.
+- Removing another member's Lounge message requires an owner or administrator; moderators can review flagged Lounge messages but not delete them.
 
 Because ownership conditions are included in the SQL update itself, bypassing the interface does not bypass the underlying rule.
 
@@ -154,9 +170,23 @@ The real `.env` configuration is excluded from Git. The tracked example file con
 
 Production secrets such as the PostgreSQL URL, JWT signing secret, and Gmail application password belong in Render's protected environment settings and must not be placed in client-side variables or committed files.
 
-### 11. Integration testing
+### 11. AI-assisted moderation and third-party data
 
-On July 28, 2026, the existing rollback-based database integration suite passed. It covered:
+New Community Lounge messages can be checked by OpenAI's moderation API. This is the only place member-written text leaves the platform, so it has its own safeguards:
+
+- Checks are off by default. Only an owner can turn them on, and every change is recorded with who made it.
+- Only the message text is sent. No account identity, email, surrounding conversation or message ID is attached.
+- Flagged messages go to a staff review queue. Nothing is removed automatically; staff decide.
+- Saved text, provider responses and category evidence are stripped after 90 days.
+- The privacy page discloses the processing to members.
+
+Full design, retention and rollback details are in [LOUNGE_MODERATION.md](LOUNGE_MODERATION.md).
+
+### 12. Integration testing
+
+The rollback-based database integration suite now has 23 test scripts (see `package.json`). Beyond the original coverage, it includes Lounge moderation, staff chat and announcements, imported posts, polls, direct-message photos and paging, forum reports, password reset, and profile avatars. This document does not record a fresh full run; re-run the suite against a non-production database before launch.
+
+On July 28, 2026, the original suite passed. It covered:
 
 - All three registration flows.
 - Automated welcome posts and notifications.
@@ -205,11 +235,11 @@ The server should add and test headers covering:
 
 The Helmet package can provide a safe starting point, but its configuration should be tested against the deployed client.
 
-### Priority 5: Recheck account status for WebSockets
+### Priority 5: Recheck account status for WebSockets (done)
 
-Socket.IO currently verifies the JWT. Private-message socket rooms also confirm conversation membership. However, the socket connection does not reload the user and recheck current approval, active, deleted, and system-account status in the same way as the REST API.
+The Socket.IO handshake now reloads the member from PostgreSQL and rejects the connection unless the account is approved, active, not deleted, and its token matches the member's current session version. Private-message rooms confirm conversation membership, and Staff Chat rechecks the member's role.
 
-The socket handshake should perform those checks, and active sockets should be disconnected when an account is deactivated where practical.
+Remaining refinement: deactivating an account blocks new connections and REST requests immediately, but does not yet disconnect sockets that are already open. A password reset already does.
 
 ### Priority 6: Make administration guards explicit
 
@@ -231,13 +261,13 @@ CAPTCHA is not a replacement for rate limiting, but it makes automated abuse mor
 
 ### Priority 9: Improve session revocation
 
-Logging out currently removes the browser's copy of the token. If a token had already been stolen, that copy could remain usable until its seven-day expiration unless the account is deactivated.
+Logging out currently removes the browser's copy of the token. If a token had already been stolen, that copy could remain usable until its seven-day expiration unless the account is deactivated or its password is reset. (A password reset increments the member's session version, which invalidates every older token.)
 
 Short-lived access sessions, secure cookies, and server-side revocable sessions would reduce this risk.
 
 ### Priority 10: Minimize and protect sensitive information
 
-Phone numbers, dates of birth, posts, and direct messages are access-controlled, but they are not end-to-end encrypted. The application's database operator can read them, and a serious database compromise could expose them.
+Phone numbers, dates of birth, posts, and direct messages are access-controlled, but they are not end-to-end encrypted. (The profile screen no longer shows the personal-details section, but the phone and date-of-birth columns remain in the database; dropping them would complete this item if the community doesn't need them.) The application's database operator can read them, and a serious database compromise could expose them.
 
 The community should collect only information it genuinely needs. Access to production data and backups should remain tightly controlled. Particularly sensitive profile fields could receive additional encryption later.
 
@@ -274,7 +304,7 @@ Making these limits clear increases trust because it distinguishes real protecti
 
 Recovery Community is protected by multiple independent security layers. Passwords are hashed, admission is controlled, private API requests require signed authentication, and the server checks the current account before granting access. Roles, ownership, and private-message membership are enforced by the server and database rather than relying on what the browser displays. Registration links are random, expiring, one-use where appropriate, and stored only as hashes. Database constraints provide additional protection against invalid or inconsistent records.
 
-The system has a credible security foundation for controlled testing and a private beta. Before launching to the full community, the development team has identified a focused hardening plan covering login protection, secure cookies, restricted browser origins, security headers, WebSocket account checks, stricter administration guards, administrator multifactor authentication, and operational safeguards. Security will be treated as an ongoing process rather than a one-time feature.
+The system has a credible security foundation for controlled testing and a private beta. Before launching to the full community, the development team has identified a focused hardening plan covering login protection, secure cookies, restricted browser origins, security headers, stricter administration guards, administrator multifactor authentication, and operational safeguards. WebSocket account checks from the original plan are complete. Security will be treated as an ongoing process rather than a one-time feature.
 
 ## Final assessment
 
