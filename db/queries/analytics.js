@@ -40,7 +40,9 @@ export async function getAnalyticsSummary({ startAt, endAt }) {
     ),
     db.query(
       `
-        SELECT page_key, COUNT(*)::INT AS views
+        SELECT page_key, COUNT(*)::INT AS views,
+          COUNT(*) FILTER (WHERE user_id IS NULL)::INT AS logged_out_views,
+          COUNT(*) FILTER (WHERE user_id IS NOT NULL)::INT AS logged_in_views
         FROM analytics_events
         WHERE created_at >= $1 AND created_at < $2
           AND event_type = 'page_view'
